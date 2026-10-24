@@ -190,3 +190,14 @@ wolframscript -file mclaunch.wl
 - 不会自动下载 Java，版本不匹配时会提示
 - 在没有独立显卡的机器上用 llvmpipe 软渲染，帧率很低
 - 下载走官方源，国内网络可能较慢
+
+## 免责声明
+
+本项目是一个非官方的第三方启动器，与 Mojang Studios、Microsoft Corporation 以及网易均无关联，也未获得上述任何一方的授权、认可或赞助。
+
+- **Minecraft** 是 Mojang Studios 的注册商标，游戏本体的著作权归其所有。
+- 本项目**不包含、也不分发**任何游戏本体、资源文件或账号凭据。所有游戏文件要么由启动器在你本地直接从 Mojang 官方服务器下载，要么使用你机器上已安装的版本。
+- 使用本项目需遵守 [Minecraft 最终用户许可协议](https://www.minecraft.net/en-us/eula)、[使用指南](https://www.minecraft.net/en-us/usage-guidelines) 以及你所在地的法律法规。
+- 中国大陆地区的 Minecraft 由网易代理运营，相关服务与条款以网易官方为准。
+- 离线模式仅用于单人测试与开发调试，请支持正版。
+- 本项目按「现状」提供，不对账号安全、数据丢失或由此产生的任何直接、间接损失承担责任。
