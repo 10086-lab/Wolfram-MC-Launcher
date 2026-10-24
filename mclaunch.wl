@@ -6,15 +6,34 @@
    按 5 启动，q 退出。不读命令行参数。
    ================================================================== *)
 
-$mcHome      = FileNameJoin[{$HomeDirectory, ".minecraft"}];
+(* ---------------- 平台判定 ---------------- *)
+$osName = Which[
+   $OperatingSystem === "Windows", "windows",
+   $OperatingSystem === "MacOSX", "osx",
+   True, "linux"];
+$osLabel = <|"windows" -> "Windows", "osx" -> "macOS", "linux" -> "Linux"|>[$osName];
+$procType = ToLowerCase[ToString[$ProcessorType]];
+$archTag = Which[
+   StringContainsQ[$procType, "arm"] || StringContainsQ[$procType, "aarch"], "arm64",
+   $SystemWordLength === 64, "x86_64",
+   True, "x86"];
+$pathSep = If[$osName === "windows", ";", ":"];
+$javaExe = If[$osName === "windows", "java.exe", "java"];
+
+envOr[name_String, fallback_] := With[{v = Environment[name]},
+   If[StringQ[v] && v =!= "", v, fallback]];
+
+$mcHome = Which[
+   envOr["MCLAUNCH_GAME_DIR", ""] =!= "", envOr["MCLAUNCH_GAME_DIR", ""],
+   $osName === "windows",
+   FileNameJoin[{envOr["APPDATA", $HomeDirectory], ".minecraft"}],
+   $osName === "osx",
+   FileNameJoin[{$HomeDirectory, "Library", "Application Support", "minecraft"}],
+   True, FileNameJoin[{$HomeDirectory, ".minecraft"}]];
 $mcVersions  = FileNameJoin[{$mcHome, "versions"}];
 $mcLibs      = FileNameJoin[{$mcHome, "libraries"}];
 $mcAssets    = FileNameJoin[{$mcHome, "assets"}];
 $manifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
-
-$javaCandidates = {
-   "/usr/lib/jvm/jdk-26.0.2-oracle-x64/bin/java",
-   "/usr/lib/jvm/java-21-openjdk-amd64/bin/java"};
 
 $features = <|
    "is_demo_user" -> False,
@@ -26,6 +45,27 @@ $features = <|
 
 (* ---------------- 基础工具 ---------------- *)
 ensureDir[p_] := (If[!DirectoryQ[p], CreateDirectory[p, CreateIntermediateDirectories -> True]]; p);
+
+(* Windows 没有 chmod，凭证文件靠用户的 NTFS 目录权限 *)
+setPrivate[file_String] := If[$osName =!= "windows",
+   Quiet@RunProcess[{"chmod", "600", file}];];
+
+(* ExtractArchive 不能解压到已存在的目录，先解到临时目录再合并 *)
+extractInto[jar_String, dir_String] := Module[{tmp, files, rel, dst},
+   tmp = FileNameJoin[{$TemporaryDirectory,
+      "mcl-nat-" <> IntegerString[Hash[jar], 10, 12]}];
+   Quiet@Check[If[DirectoryQ[tmp], DeleteDirectory[tmp, DeleteContents -> True]], Null];
+   If[Quiet@Check[ExtractArchive[jar, tmp], $Failed] === $Failed,
+    Quiet@Check[DeleteDirectory[tmp, DeleteContents -> True], Null];
+    Return[Null]];
+   files = Quiet@Check[FileNames["*", tmp, Infinity], {}];
+   Scan[Function[f,
+      If[Quiet@FileType[f] === File,
+       rel = StringDrop[f, StringLength[tmp] + 1];
+       dst = FileNameJoin[{dir, rel}];
+       ensureDir[DirectoryName[dst]];
+       Quiet@CopyFile[f, dst, OverwriteTarget -> True]]], files];
+   Quiet@Check[DeleteDirectory[tmp, DeleteContents -> True], Null]];
 
 dl[url_String, file_String, size_Integer : 0] := Module[{},
    ensureDir[DirectoryName[file]];
@@ -41,8 +81,15 @@ getJson[url_String] := Module[{tmp, j},
    j];
 
 (* ---------------- 规则判定 ---------------- *)
+archMatches[a_String] := Which[
+   a === "x86", $SystemWordLength === 32,
+   a === "arm64" || a === "aarch64", $archTag === "arm64",
+   a === "x86_64" || a === "amd64", $SystemWordLength === 64 && $archTag === "x86_64",
+   True, False];
+
+(* os.version（如 Windows 的 "^10\\."）只影响少数可选库，这里放宽处理 *)
 osMatches[os_Association] := Module[{n = Lookup[os, "name", None], a = Lookup[os, "arch", None]},
-   And[n === None || n === "linux", a === None]];
+   And[n === None || n === $osName, a === None || (StringQ[a] && archMatches[a])]];
 
 featureMatches[feat_Association] := AllTrue[Normal[feat],
    Lookup[$features, #[[1]], False] === #[[2]] &];
@@ -60,11 +107,23 @@ resolveRules[rules_List] := Module[{idx},
 libAllowed[lib_Association] := Module[{rules = Lookup[lib, "rules", {}]},
    If[rules === {}, True, resolveRules[rules]]];
 
+(* 1.12 及更早的 natives 在 downloads.classifiers 里，键名按平台取 *)
+legacyNatives[lib_Association] := Module[{n, key, cls},
+   n = Lookup[lib, "natives", None];
+   If[! AssociationQ[n], Return[{}]];
+   key = Lookup[n, $osName, None];
+   If[! StringQ[key], Return[{}]];
+   key = StringReplace[key,
+     "$" <> "{arch}" -> If[$SystemWordLength === 64, "64", "32"]];
+   cls = Lookup[Lookup[lib, "downloads", <||>], "classifiers", <||>];
+   If[! AssociationQ[cls], Return[{}]];
+   DeleteCases[{Lookup[cls, key, Nothing]}, _Nothing | _Missing]];
+
 (* ---------------- 路径换算 ---------------- *)
 libRelPath[name_String] := Module[{p = StringSplit[name, ":"]},
    If[Length[p] < 3, Return[$Failed]];
-   FileNameJoin[{StringReplace[p[[1]], "." -> "/"], p[[2]], p[[3]],
-     p[[2]] <> "-" <> p[[3]] <> ".jar"}]];
+   FileNameJoin[Join[StringSplit[StringReplace[p[[1]], "." -> "/"], "/"],
+     {p[[2]], p[[3]], p[[2]] <> "-" <> p[[3]] <> ".jar"}]]];
 
 (* ---------------- 参数展开 ---------------- *)
 expandArgs[args_List] := Flatten[Map[
@@ -89,8 +148,51 @@ cleanArgs[args_List] := Module[{out = {}, i = 1, n = Length[args]},
      True, AppendTo[out, args[[i]]]; i += 1]];
    out];
 
-pickJava[] := Module[{ok = Select[$javaCandidates, FileExistsQ]},
-   If[ok === {}, $Failed, First[ok]]];
+pathDirs[] := Module[{p = envOr["PATH", ""],
+   sep = If[$osName === "windows", ";", ":"]},
+   DeleteCases[StringTrim[#, "\""] & /@ StringSplit[p, sep], ""]];
+
+javaMajor[java_String] := Module[{r, first, nums, parts},
+   r = Quiet@Check[RunProcess[{java, "-version"}, "StandardError"], $Failed];
+   If[! StringQ[r], Return[$Failed]];
+   first = First[StringSplit[r, "\n"]];
+   nums = StringCases[first, RegularExpression["[0-9]+(?:\\.[0-9]+)*"]];
+   If[nums === {}, Return[$Failed]];
+   parts = StringSplit[First[nums], "."];
+   Which[
+    First[parts] === "1" && Length[parts] >= 2, ToExpression[parts[[2]]],
+    True, ToExpression[First[parts]]]];
+
+javaCandidates[] := Module[{jh, pf, lad, roots},
+   jh = envOr["JAVA_HOME", ""];
+   pf = envOr["ProgramFiles", ""];
+   lad = envOr["LOCALAPPDATA", ""];
+   roots = DeleteCases[If[$osName === "windows",
+      {If[pf =!= "", FileNameJoin[{pf, #}], $Failed] & /@
+        {"Java", "Eclipse Adoptium", "Microsoft", "Zulu", "Amazon Corretto",
+         "BellSoft", "Semeru"},
+       If[lad =!= "", FileNameJoin[{lad, "Programs", "Eclipse Adoptium"}], $Failed]},
+      If[$osName === "osx",
+       {"/Library/Java/JavaVirtualMachines", "/opt/homebrew/opt",
+        "/usr/local/opt", "/usr/lib/jvm"},
+       {"/usr/lib/jvm", "/usr/lib64/jvm", "/usr/java", "/opt"}]], $Failed];
+   DeleteDuplicates@DeleteCases[Join[
+      {If[jh =!= "", FileNameJoin[{jh, "bin", $javaExe}], $Failed]},
+      FileNameJoin[{#, $javaExe}] & /@ pathDirs[],
+      Flatten[FileNames[{"*/bin/" <> $javaExe,
+         "*/Contents/Home/bin/" <> $javaExe}, #] & /@ roots]], $Failed]];
+
+(* 返回 {路径, 主版本号}；need 为清单要求的 Java 版本 *)
+pickJava[need_Integer : 0] := Module[{info, exact, higher},
+   info = SortBy[DeleteCases[{#, javaMajor[#]} & /@
+       Select[javaCandidates[], FileExistsQ], {_, $Failed} | {_, _Missing}],
+     Last];
+   If[info === {}, Return[$Failed]];
+   exact = Select[info, Last[#] === need &];
+   If[exact =!= {}, Return[First[exact]]];
+   higher = Select[info, Last[#] > need &];
+   If[higher =!= {}, Return[First[higher]]];
+   Last[info]];
 
 (* ---------------- 配置持久化 ---------------- *)
 $cfgFile = FileNameJoin[{$mcHome, "wl-launcher.conf"}];
@@ -130,7 +232,7 @@ loadAccounts[] := Module[{l},
       Lookup[#, "uuid", ""] =!= "" &]];
 
 saveAccounts[l_] := (Export[$acctFile, l, "JSON"];
-   RunProcess[{"chmod", "600", $acctFile}];);
+   setPrivate[$acctFile];);
 
 upsertAccount[a_Association] := Module[{l, pos},
    l = loadAccounts[];
@@ -177,11 +279,11 @@ localVersions[] := Module[{names},
    Sort[Select[names,
      FileExistsQ[FileNameJoin[{$mcVersions, #, # <> ".json"}]] &]]];
 
-dirBytes[dir_String] := Module[{r},
+dirBytes[dir_String] := Module[{files},
    If[! DirectoryQ[dir], Return[0]];
-   r = Quiet@Check[RunProcess[{"du", "-sb", dir}, "StandardOutput"], ""];
-   If[StringQ[r] && StringContainsQ[r, "\t"],
-    Quiet@Check[ToExpression@First@StringSplit[StringTrim[r], "\t"], 0], 0]];
+   files = Quiet@Check[FileNames["*", dir, Infinity], {}];
+   Total[Quiet@Check[FileByteCount[#], 0] & /@
+     Select[files, Quiet@FileType[#] === File &]]];
 
 humanBytes[b_?NumberQ] := Which[
    b >= 1073741824, ToString@Round[b/1073741824., .01] <> " GB",
@@ -280,7 +382,7 @@ pickLocal[cfg_Association] := Module[{vs = localVersions[], c, new = cfg},
     Print["  \:6ca1\:6709\:8fd9\:4e2a\:7248\:672c\:ff1a", c]; cfg]];
 
 printDisk[] := Module[{a, b, c},
-   Print["  \:7528 du \:7edf\:8ba1\:ff0c\:7a0d\:7b49\:4e00\:4e0b\:2026"];
+   Print["  \:6b63\:5728\:7edf\:8ba1\:76ee\:5f55\:5927\:5c0f\:ff0c\:7a0d\:7b49\:4e00\:4e0b\:2026"];
    a = dirBytes[FileNameJoin[{$mcHome, "libraries"}]];
    b = dirBytes[FileNameJoin[{$mcHome, "assets"}]];
    c = dirBytes[FileNameJoin[{$mcHome, "versions"}]];
@@ -450,7 +552,7 @@ msLogin[] := Module[{d, dc, interval, deadline, tok, res, a, n = 0, chain},
 
    upsertAccount[chain];
    Export[$tokenFile, chain, "JSON"];
-   RunProcess[{"chmod", "600", $tokenFile}];
+   setPrivate[$tokenFile];
    Print["==> \:767b\:5f55\:6210\:529f\:ff1a", chain["name"]];
    chain];
 
@@ -467,7 +569,7 @@ msRefresh[t_] := Module[{res, chain},
    If[chain === $Failed, Return[$Failed]];
    upsertAccount[chain];
    Export[$tokenFile, chain, "JSON"];
-   RunProcess[{"chmod", "600", $tokenFile}];
+   setPrivate[$tokenFile];
    <|"name" -> chain["name"], "uuid" -> chain["uuid"],
     "token" -> chain["token"], "type" -> "msa"|>];
 
@@ -558,11 +660,13 @@ downloadAsk[cfg_] := Module[{c, r},
 
 (* ---------------- 主流程 ---------------- *)
 run[cfg_Association, mode_String : "launch"] := Module[{
-   manifest, target, verJson, localJson, id, java, cp, nativesDir, clientJar,
+   manifest, target, verJson, localJson, id, java, javaInfo, needJava, cp,
+   nativesDir, clientJar,
    authName, authUuid, authToken, authType,
    libEntries, libPaths, sown, art, rel, dest, jvmArgs, gameArgs, natJars,
+   legacy, na, jvmArgsRaw, gameArgsRaw,
    cmd, proc, line, n = 0, vars, logCfg, logPath, logArg, ai, aif,
-   aIdx, objs2, assetRoot, missing, n2, missMB,
+   aIdx, objs2, assetRoot, missing, n2, missMB, dlOne, failCount,
    deadline, sz, printed = 0},
    manifest = getJson[$manifestUrl];
 
@@ -590,9 +694,18 @@ run[cfg_Association, mode_String : "launch"] := Module[{
     ensureDir[FileNameJoin[{$mcVersions, id}]];
     Quiet@Export[localJson, verJson, "JSON"]];
 
-   java = pickJava[];
-   If[java === $Failed, Print["[x] \:627e\:4e0d\:5230\:53ef\:7528\:7684 Java"]; Return[$Failed]];
-   Print["    Java   : ", java];
+   needJava = Replace[Lookup[Lookup[verJson, "javaVersion", <||>],
+      "majorVersion", 8], _Missing -> 8];
+   javaInfo = pickJava[needJava];
+   If[javaInfo === $Failed,
+    Print["[x] \:627e\:4e0d\:5230\:53ef\:7528\:7684 Java\:ff08\:9700\:8981 Java ",
+     needJava, "+ \:ff09"]; Return[$Failed]];
+   java = First[javaInfo];
+   Print["    Java   : ", java, "  (", Last[javaInfo], ")"];
+   If[Last[javaInfo] < needJava,
+    Print["    [!] \:8fd9\:4e2a\:7248\:672c\:9700\:8981 Java ", needJava,
+     "+\:ff0c\:5f53\:524d\:53ea\:6709 Java ", Last[javaInfo],
+     "\:ff0c\:53ef\:80fd\:65e0\:6cd5\:542f\:52a8"]];
    Print["    \:4e3b\:7c7b   : ", verJson["mainClass"]];
 
    (* --- client.jar --- *)
@@ -605,31 +718,52 @@ run[cfg_Association, mode_String : "launch"] := Module[{
 
    (* --- libraries --- *)
    libEntries = Select[verJson["libraries"], libAllowed];
-   Print["    \:5e93     : ", Length[libEntries], " \:4e2a\:ff08Linux \:53ef\:7528\:ff09"];
+   Print["    \:5e93     : ", Length[libEntries], " \:4e2a\:ff08", $osLabel, " \:53ef\:7528\:ff09"];
    natJars = {};
    sown = Reap[
       Do[
-       art = Lookup[lib["downloads"], "artifact", None];
-       If[art === None, Continue[]];
-       (* 关键：用清单给的 path。同一 Maven 坐标可能有主 jar+多个 natives 变体，
-          自己按 name 推算会把它们算成同一个文件互相覆盖 *)
-       rel = Lookup[art, "path", None];
-       If[rel === None, rel = libRelPath[lib["name"]]];
-       If[rel === $Failed || rel === None, Continue[]];
-       dest = FileNameJoin[{$mcLibs, rel}];
-       If[dl[art["url"], dest, art["size"]] =!= $Failed,
-        Sow[dest]; n++;
-        If[StringContainsQ[lib["name"], ":natives-"], AppendTo[natJars, dest]];
-        If[Mod[n, 10] === 0, showProg["\:5e93\:6587\:4ef6", n, Length[libEntries]]]]
-       , {lib, libEntries}]][[2]];
+       (* 普通 artifact（含 1.19+ 的 natives 变体，它们本身就在 artifact 里） *)
+       art = Lookup[Lookup[lib, "downloads", <||>], "artifact", None];
+       If[AssociationQ[art],
+        (* 关键：用清单给的 path。同一 Maven 坐标可能有主 jar+多个 natives 变体，
+           自己按 name 推算会把它们算成同一个文件互相覆盖 *)
+        rel = Lookup[art, "path", None];
+        If[rel === None, rel = libRelPath[lib["name"]]];
+        If[rel =!= $Failed && rel =!= None,
+         dest = FileNameJoin[{$mcLibs, rel}];
+         If[dl[art["url"], dest, art["size"]] =!= $Failed,
+          Sow[dest]; n++;
+          If[StringContainsQ[lib["name"], ":natives-"] ||
+            StringContainsQ[lib["name"], ":natives_"],
+           AppendTo[natJars, dest]];
+          If[Mod[n, 10] === 0,
+           showProg["\:5e93\:6587\:4ef6", n, Length[libEntries]]]]]];
+       (* 旧版 natives 只解压、不进 classpath *)
+       legacy = legacyNatives[lib];
+       Do[
+        rel = Lookup[na, "path", None];
+        If[rel === None, rel = libRelPath[lib["name"]]];
+        If[rel =!= $Failed && rel =!= None,
+         dest = FileNameJoin[{$mcLibs, rel}];
+         If[dl[na["url"], dest, na["size"]] =!= $Failed,
+          AppendTo[natJars, dest]; n++;
+          If[Mod[n, 10] === 0,
+           showProg["\:5e93\:6587\:4ef6", n, Length[libEntries]]]]],
+        {na, legacy}],
+       {lib, libEntries}]][[2]];
    endProg[];
    libPaths = DeleteDuplicates@If[sown === {}, {}, First[sown]];
    Print["    \:5c31\:7eea   : ", Length[libPaths], " \:4e2a\:5e93"];
 
-   (* --- natives 目录（26.x 无需解压） --- *)
+   (* --- natives 解压（旧版和 LWJGL natives 都需要） --- *)
    nativesDir = FileNameJoin[{$mcHome, "natives", id}];
+   If[DirectoryQ[nativesDir],
+    Quiet@Check[DeleteDirectory[nativesDir, DeleteContents -> True], Null]];
    ensureDir[nativesDir];
-   Scan[Quiet@Check[ExtractArchive[#, nativesDir], Null] &, natJars];
+   Scan[extractInto[#, nativesDir] &, natJars];
+   (* 去掉签名，免得旧版 lwjgl 因为 META-INF 冲突报错 *)
+   Quiet@Check[DeleteDirectory[FileNameJoin[{nativesDir, "META-INF"}],
+      DeleteContents -> True], Null];
    Print["    natives: ", Length[natJars], " \:4e2a\:5305\:5df2\:89e3\:538b\:5230 ", nativesDir];
 
    (* --- 日志配置 --- *)
@@ -658,18 +792,31 @@ run[cfg_Association, mode_String : "launch"] := Module[{
     Print["    \:8d44\:6e90   : index ", ai["id"], "\:ff08", Length[objs2], " \:9879\:ff0c\:7f3a ",
      Length[missing], " \:9879 / ", missMB, " MB\:ff09"];
     Print["    \:4e0b\:8f7d\:8d44\:6e90\:672c\:4f53\:2026"];
-    ParallelMap[
-     Function[ob,
+    dlOne = Function[ob,
       Module[{p, u},
        p = FileNameJoin[{assetRoot, StringTake[ob["hash"], 2], ob["hash"]}];
-       If[! DirectoryExistsQ[DirectoryName[p]],
-        CreateDirectory[DirectoryName[p], CreateIntermediateDirectories -> True]];
-       If[FileExistsQ[p] && FileByteCount[p] === ob["size"], Return[1]];
-       u = "https://resources.download.minecraft.net/" <>
-         StringTake[ob["hash"], 2] <> "/" <> ob["hash"];
-       Quiet@Check[URLDownload[u, p, TimeConstraint -> 120], Null];
-       If[FileExistsQ[p] && FileByteCount[p] === ob["size"], 1, 0]]],
-     missing, Method -> "CoarsestGrained"],
+       ensureDir[DirectoryName[p]];
+       If[! (FileExistsQ[p] && FileByteCount[p] === ob["size"]),
+        u = "https://resources.download.minecraft.net/" <>
+          StringTake[ob["hash"], 2] <> "/" <> ob["hash"];
+        Quiet@Check[URLDownload[u, p, TimeConstraint -> 120], Null]];
+       If[FileExistsQ[p] && FileByteCount[p] === ob["size"], 1, 0]]];
+    (* 有些 Wolfram Engine 没有并行子核，ParallelMap 会静默什么都不做 *)
+    If[$KernelCount > 0,
+     ParallelMap[dlOne, missing, Method -> "CoarsestGrained"],
+     n2 = 0;
+     Map[Function[ob,
+        With[{ok = dlOne[ob]}, n2++;
+         If[Mod[n2, 10] === 0,
+          showProg["\:8d44\:6e90\:6587\:4ef6", n2, Length[missing]]]; ok]],
+       missing];
+     endProg[]];
+    failCount = Length[Select[missing, Function[ob,
+       With[{p = FileNameJoin[{assetRoot, StringTake[ob["hash"], 2], ob["hash"]}]},
+        ! FileExistsQ[p] || FileByteCount[p] =!= ob["size"]]]]];
+    If[failCount > 0,
+     Print["    [!] ", failCount,
+      " \:4e2a\:8d44\:6e90\:6ca1\:4e0b\:5b8c\:ff0c\:91cd\:8bd5\:6216\:68c0\:67e5\:7f51\:7edc"]],
     Print["    \:8d44\:6e90   : index ", ai["id"], "\:ff08", Length[objs2], " \:9879\:ff0c\:5df2\:9f50\:5168\:ff09"]];
 
    If[mode === "download",
@@ -682,8 +829,9 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    authToken = $auth["token"]; authType = $auth["type"];
 
    (* --- 组装命令行 --- *)
-   sz = StringSplit[cfg["size"], "x"];
-   cp = StringRiffle[Prepend[libPaths, clientJar], ":"];
+   sz = StringSplit[cfg["size"], "x" | "X" | "\:00d7"];
+   If[Length[sz] =!= 2, sz = {"1280", "720"}];
+   cp = StringRiffle[Prepend[libPaths, clientJar], $pathSep];
    vars = <|
      "$" <> "{natives_directory}" -> nativesDir,
      "$" <> "{classpath}" -> cp,
@@ -709,9 +857,29 @@ run[cfg_Association, mode_String : "launch"] := Module[{
      "$" <> "{quickPlayMultiplayer}" -> "",
      "$" <> "{quickPlayRealms}" -> ""|>;
 
-   jvmArgs = DeleteCases[Flatten[{fillVars[#, vars] & /@ expandArgs[verJson["arguments", "jvm"]],
-       logArg}], _Nothing | _Missing];
-   gameArgs = cleanArgs[fillVars[#, vars] & /@ expandArgs[verJson["arguments", "game"]]];
+   (* 1.13+ 用 arguments，更早的版本用 minecraftArguments 字符串 *)
+   If[KeyExistsQ[verJson, "arguments"] &&
+      KeyExistsQ[verJson["arguments"], "jvm"],
+    jvmArgsRaw = expandArgs[verJson["arguments", "jvm"]],
+    jvmArgsRaw = {"-Djava.library.path=" <> nativesDir, "-cp", cp}];
+   If[KeyExistsQ[verJson, "arguments"] &&
+      KeyExistsQ[verJson["arguments"], "game"],
+    gameArgsRaw = expandArgs[verJson["arguments", "game"]],
+    gameArgsRaw = If[StringQ[Lookup[verJson, "minecraftArguments", None]],
+      StringSplit[verJson["minecraftArguments"]], {}]];
+
+   jvmArgs = DeleteCases[Flatten[{fillVars[#, vars] & /@ jvmArgsRaw,
+        logArg}], _Nothing | _Missing];
+   (* macOS 上 LWJGL 要求主线程启动；新清单自带，旧版得补 *)
+   If[$osName === "osx" && ! MemberQ[jvmArgs, "-XstartOnFirstThread"],
+    jvmArgs = Prepend[jvmArgs, "-XstartOnFirstThread"]];
+   (* 清单里的 -Dxxx=${natives_directory}/yyy 需要目录真的存在 *)
+   Scan[Function[a,
+      With[{p = StringReplace[a, RegularExpression["^-D[^=]+="] -> ""]},
+       If[StringQ[p] && StringStartsQ[p, nativesDir] &&
+          StringLength[p] > StringLength[nativesDir],
+        ensureDir[p]]]], jvmArgs];
+   gameArgs = cleanArgs[fillVars[#, vars] & /@ gameArgsRaw];
 
    cmd = Join[{java, "-Xmx" <> cfg["ram"], "-Xms1G"}, jvmArgs,
      extraArgs[cfg["jvm"]], {verJson["mainClass"]}, gameArgs,
@@ -721,14 +889,17 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    Print["==> JVM \:53c2\:6570 ", Length[jvmArgs], " \:6761\:ff0c\:6e38\:620f\:53c2\:6570 ", Length[gameArgs], " \:6761"];
 
    Print["==> \:542f\:52a8\:4e2d\:2026"];
-   proc = StartProcess[cmd,
-     ProcessEnvironment -> <|
-       "HOME" -> $HomeDirectory,
-       "PATH" -> "/usr/bin:/bin:/usr/local/bin",
-       "DISPLAY" -> Replace[Environment["DISPLAY"], _Missing -> ":0"],
-       "WAYLAND_DISPLAY" -> Replace[Environment["WAYLAND_DISPLAY"], _Missing -> ""],
-       "XAUTHORITY" -> Replace[Environment["XAUTHORITY"], _Missing -> ""],
-       "XDG_RUNTIME_DIR" -> Replace[Environment["XDG_RUNTIME_DIR"], _Missing -> ""]|>];
+   (* Linux 上补窗口环境；Windows / macOS 直接继承，免得丢 SystemRoot 之类的变量 *)
+   proc = If[$osName === "linux",
+     StartProcess[cmd,
+      ProcessEnvironment -> <|
+        "HOME" -> $HomeDirectory,
+        "PATH" -> "/usr/bin:/bin:/usr/local/bin",
+        "DISPLAY" -> envOr["DISPLAY", ":0"],
+        "WAYLAND_DISPLAY" -> envOr["WAYLAND_DISPLAY", ""],
+        "XAUTHORITY" -> envOr["XAUTHORITY", ""],
+        "XDG_RUNTIME_DIR" -> envOr["XDG_RUNTIME_DIR", ""]|>],
+     StartProcess[cmd]];
 
    If[!MatchQ[proc, _ProcessObject],
     Print["[x] \:8fdb\:7a0b\:542f\:52a8\:5931\:8d25"]; Return[$Failed]];
