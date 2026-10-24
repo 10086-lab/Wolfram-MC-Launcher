@@ -16,7 +16,6 @@ $javaCandidates = {
    "/usr/lib/jvm/jdk-26.0.2-oracle-x64/bin/java",
    "/usr/lib/jvm/java-21-openjdk-amd64/bin/java"};
 
-(* 本启动器声明支持的客户端特性；features 里要求为 true 而我们没开 ⇒ 该规则不匹配 *)
 $features = <|
    "is_demo_user" -> False,
    "has_custom_resolution" -> True,
@@ -331,9 +330,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      _, Print["  ? \:6ca1\:6709\:8fd9\:4e2a\:9009\:9879\:ff1a", s]];
     saveCfg[cfg]]];
 (* ---------------- 正版登录 ---------------- *)
-(* client_id 用的是 Prism Launcher 开源项目里的 Azure 应用。
-   想换成自己的：在 portal.azure.com 注册应用 → 身份验证 → 允许公共客户端流，
-   把新 ID 填到下面这行。 *)
+(* client_id 用的是 Prism Launcher*)
 $clientId = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
 $authBase = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
 $tokenFile = FileNameJoin[{$mcHome, "wl-launcher-token.json"}];
