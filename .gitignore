@@ -1,0 +1,31 @@
+# ---- Wolfram Language 通用 ----
+*.nb
+*.mx
+*.wdx
+*.cdf
+*.nb~
+*.wl.bak
+*.wl.bak*
+*.wls.bak*
+
+# ---- 本项目运行产物 ----
+logs/
+*.log
+*.log.gz
+mc_run*.log
+*.out
+natives/
+
+# ---- 本地配置 / 凭证（含 token，绝不能提交） ----
+wl-launcher.conf
+wl-launcher-token.json
+wl-launcher-accounts.json
+
+# ---- 编辑器 / 系统垃圾 ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*~
+*.swp
+*.swo
