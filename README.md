@@ -1,13 +1,12 @@
 # Wolfram MC Launcher
 
-用纯 Wolfram Language 写的 Minecraft 启动器。不需要 Node、Python 或任何第三方库，一个 `.wl` 文件加一个 `.sh` 入口就能跑。
+用纯 Wolfram Language 写的 Minecraft 启动器。不需要 Node、Python 或任何第三方库。
 
 ## 功能
 
 - **交互式菜单**，没有命令行参数，启动后改配置、切版本、登录都在菜单里完成
 - **版本管理**：列出本机已装版本；从 Mojang 官方源下载任意正式版（库 + 资源 + 清单）
 - **正版登录**：微软账号设备码流程，支持多账号保存与切换
-- **离线模式**：不登录也能玩
 - **可调配置**：内存、窗口大小、JVM 参数、游戏参数，设置写盘持久化
 - **磁盘占用统计**：分别显示 libraries / assets / versions 的体积
 
@@ -15,7 +14,7 @@
 
 - Wolfram Engine 14 以上（开发环境 15.0.1）
 - Java 21 以上；Minecraft 26.x 需要 Java 25
-- Linux（路径拼接、natives 解压按 Unix 写死）
+- Linux（其他平台未测试）
 
 ## 用法
 
