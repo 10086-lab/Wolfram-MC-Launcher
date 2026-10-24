@@ -101,9 +101,9 @@ run.bat
 wolframscript -file mclaunch.wl
 ```
 
-如果你有 Mathematica 之类的，也可以直接在 notebook 里跑。
+如果你有 Mathematica 之类的，可以直接在 notebook 里跑。
 
-必须在**真正的终端**里跑。用管道、重定向或某些 IDE 的伪终端喂输入会失败，因为 `InputString` 依赖 tty。
+如果只是Wolfram Engine必须在**真正的终端**里跑。用管道、重定向或某些 IDE 的伪终端喂输入会失败，因为 `InputString` 依赖 tty。
 
 ### 第一次跑
 
