@@ -24,7 +24,7 @@
 
 ### 1. Wolfram Engine
 
-到 <https://www.wolfram.com/engine/> 下载对应平台的安装包。免费，注册个 Wolfram ID 就能激活。
+到 <https://www.wolfram.com/engine/> 下载对应平台的安装包。
 
 Linux 是 `.sh` 安装包：
 
@@ -101,6 +101,8 @@ run.bat
 wolframscript -file mclaunch.wl
 ```
 
+如果你有 Mathematica 之类的，也可以直接在 notebook 里跑。
+
 必须在**真正的终端**里跑。用管道、重定向或某些 IDE 的伪终端喂输入会失败，因为 `InputString` 依赖 tty。
 
 ### 第一次跑
@@ -124,7 +126,7 @@ wolframscript -file mclaunch.wl
   q) 退出
 ```
 
-**第一步，按 `9` 下载版本。** 会问版本号，输 `26.2` 或 `26.3`。库约 80MB、资源约 460MB，看网速。
+**第一步，按 `9` 下载版本。** 会问版本号，输 `26.2` 或 `26.3`。库约 80MB、资源约 460MB，速度看你家宽带能力和微软土豆有没有发芽。
 
 **第二步，按 `7` 选登录方式。**
 
@@ -149,7 +151,7 @@ wolframscript -file mclaunch.wl
 
 想换位置可以设环境变量 `MCLAUNCH_GAME_DIR`，比如把游戏装到移动硬盘。
 
-配置与凭证不随仓库分发：
+配置与凭证就放在这个目录下，不随仓库分发：
 
 - `wl-launcher.conf` — 版本、内存、窗口、当前账号等
 - `wl-launcher-accounts.json` — 账号库，权限 600（Windows 受限于 NTFS 权限）
