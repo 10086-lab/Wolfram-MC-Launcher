@@ -166,7 +166,7 @@ wolframscript -file mclaunch.wl
 /home/you/mc-bar/           ← 也可以指定任意目录，比如建在别的盘
 ```
 
-新建时会问目录，直接回车就用 `~/.minecraft/instances/<名字>`，也可以填绝对路径、`~/xxx` 或者相对路径。指定过目录的实例记在 `~/.minecraft/instances.json`，菜单里会显示每个实例的实际路径。
+新建时会问目录，直接回车就用 `~/.minecraft/instances/<名字>`，也可以填绝对路径、`~/xxx` 或者相对路径。**输入 `?` 会弹出系统文件选择框**（Linux 用 zenity / kdialog，macOS 用 Finder 的 choose folder），在里面点两下比手打路径省事。指定过目录的实例记在 `~/.minecraft/instances.json`，菜单里会显示每个实例的实际路径。
 
 存档、资源包、按键设置、显示设置各管各的，互不污染。新建实例会继承当时的配置，之后改哪个实例的配置就只写那个实例目录里的 `launcher.conf`。
 

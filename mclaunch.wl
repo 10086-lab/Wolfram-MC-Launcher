@@ -351,6 +351,25 @@ deleteInstance[name_String] := Module[{m, p},
        DeleteContents -> True], Null]]];
    True];
 
+(* \:8c03\:7cfb\:7edf\:6587\:4ef6\:9009\:62e9\:6846\:ff1b\:53d6\:6d88\:8fd4\:56de\:7a7a\:4e32 *)
+pickDir[] := Module[{cmd, r, p, to},
+   cmd = Which[
+     $osName === "linux" && FileExistsQ["/usr/bin/zenity"],
+      {"/usr/bin/zenity", "--file-selection", "--directory", "--title=\:9009\:62e9\:6e38\:620f\:76ee\:5f55"},
+     $osName === "linux" && FileExistsQ["/usr/bin/kdialog"],
+      {"/usr/bin/kdialog", "--getexistingdirectory", $HomeDirectory},
+     $osName === "osx",
+      {"osascript", "-e", "POSIX path of (choose folder with prompt \"\:9009\:62e9\:6e38\:620f\:76ee\:5f55\")"},
+     True, {}];
+   If[cmd === {}, Return[""]];
+   to = Quiet@Check[ToExpression[envOr["MCLAUNCH_PICK_TIMEOUT", "0"]], 0];
+   If[IntegerQ[to] && to > 0 && MemberQ[cmd, "--file-selection"],
+    cmd = Insert[cmd, "--timeout=" <> ToString[to], -1]];
+   r = Quiet@Check[RunProcess[cmd], $Failed];
+   If[! AssociationQ[r], Return[""]];
+   p = StringTrim[Lookup[r, "StandardOutput", ""]];
+   If[StringLength[p] > 0 && DirectoryQ[p], p, ""]];
+
 instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim, dirIn},
    While[True,
     ns = instanceNames[];
@@ -379,12 +398,17 @@ instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim, dirIn}
       If[StringQ[name] && StringTrim[name] =!= "" &&
          ! MemberQ[ns, StringTrim[name]],
        name = StringTrim[name];
-       dirIn = askLine["  \:76ee\:5f55\:ff08\:56de\:8f66\:7528 " <> FileNameJoin[{$instRoot, name}] <> "\:ff09> "];
+       dirIn = askLine["  \:76ee\:5f55\:ff08\:56de\:8f66\:7528 " <> FileNameJoin[{$instRoot, name}] <> "\:ff0c\:8f93\:5165 ? \:5f39\:7cfb\:7edf\:6d4f\:89c8\:ff09> "];
        If[! StringQ[dirIn], dirIn = ""];
        dirIn = StringTrim[dirIn];
+       If[MemberQ[{"?", "b", "B"}, dirIn],
+        dirIn = pickDir[];
+        If[dirIn === "",
+         Print["  \:6ca1\:9009\:76ee\:5f55\:ff0c\:7528\:9ed8\:8ba4\:4f4d\:7f6e"],
+         Print["  ==> \:5df2\:9009 ", dirIn]]];
        If[StringStartsQ[dirIn, "~"],
         dirIn = StringReplace[dirIn, StartOfString ~~ "~" -> $HomeDirectory]];
-       If[dirIn =!= "" && ! StringStartsQ[dirIn, "/"],
+       If[dirIn =!= "" && $osName =!= "windows" && ! StringStartsQ[dirIn, "/"],
         dirIn = FileNameJoin[{$HomeDirectory, dirIn}]];
        cfg = makeInstance[name, cfg, dirIn];
        saveCfg[cfg];
