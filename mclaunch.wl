@@ -442,6 +442,13 @@ instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim, dirIn}
      _, Print["  ? ", "\:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
    cfg];
 
+(* \:7248\:672c\:76ee\:5f55\:8ddf\:7740\:5b9e\:4f8b\:8d70\:ff1b\:5207\:5b9e\:4f8b\:540e $mcVersions \:8981\:91cd\:65b0\:6307\:5411 *)
+syncVersionsDir[cfg_Association] := Module[{d},
+   d = FileNameJoin[{gameDirOf[cfg], "versions"}];
+   If[d =!= $mcVersions, $mcVersions = d];
+   ensureDir[$mcVersions];
+   $mcVersions];
+
 localVersions[] := Module[{names},
    If[! DirectoryQ[$mcVersions], Return[{}]];
    names = FileNameTake /@ Quiet@Check[FileNames[$mcVersions <> "/*"], {}];
@@ -573,6 +580,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
       "uuid" -> "00000000000000000000000000000000",
       "token" -> "0", "type" -> "legacy"|>];
    While[True,
+    syncVersionsDir[cfg];
     printMenu[cfg];
     s = askLine["\:9009\:62e9 > "];
     If[s === $Failed,
@@ -1284,6 +1292,7 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    cmd, proc, line, n = 0, vars, logCfg, logPath, logArg, ai, aif,
    aIdx, objs2, assetRoot, missing, n2, missMB, dlOne, failCount,
    deadline, sz, printed = 0, extra, waitSec, jarId, eline},
+   syncVersionsDir[cfg];
    manifest = getJson[$manifestUrl];
 
    id = If[cfg["version"] === Automatic,
