@@ -67,14 +67,16 @@ extractInto[jar_String, dir_String] := Module[{tmp, files, rel, dst},
        Quiet@CopyFile[f, dst, OverwriteTarget -> True]]], files];
    Quiet@Check[DeleteDirectory[tmp, DeleteContents -> True], Null]];
 
-dl[url_String, file_String, size_Integer : 0] := Module[{},
+dl[url_String, file_String, size_Integer : 0] := Module[{ok},
    ensureDir[DirectoryName[file]];
    If[FileExistsQ[file] && (size === 0 || FileByteCount[file] === size), Return[file]];
-   Quiet@Check[URLDownload[url, file, TimeConstraint -> 300], Return[$Failed]];
-   If[FileExistsQ[file], file, $Failed]];
+   Quiet@Check[URLDownload[url, file, TimeConstraint -> 300], Null];
+   ok = FileExistsQ[file] && (size === 0 || FileByteCount[file] === size);
+   If[ok, file, $Failed]];
 
 getJson[url_String] := Module[{tmp, j},
    tmp = FileNameJoin[{$TemporaryDirectory, "mcl-" <> IntegerString[Hash[url]] <> ".json"}];
+   Quiet@Check[DeleteFile[tmp], Null];
    If[dl[url, tmp] === $Failed, Return[$Failed]];
    j = Quiet@Check[Import[tmp, "RawJSON"], $Failed];
    Quiet@DeleteFile[tmp];
@@ -240,7 +242,8 @@ loadAccounts[] := Module[{l},
    Select[l, AssociationQ[#] && StringQ[Lookup[#, "uuid", ""]] &&
       Lookup[#, "uuid", ""] =!= "" &]];
 
-saveAccounts[l_] := (Export[$acctFile, l, "JSON"];
+saveAccounts[l_] := (ensureDir[DirectoryName[$acctFile]];
+   Export[$acctFile, l, "JSON"];
    setPrivate[$acctFile];);
 
 upsertAccount[a_Association] := Module[{l, pos},
@@ -565,7 +568,7 @@ printDisk[] := Module[{a, b, c},
    Print["  \:6b63\:5728\:7edf\:8ba1\:76ee\:5f55\:5927\:5c0f\:ff0c\:7a0d\:7b49\:4e00\:4e0b\:2026"];
    a = dirBytes[FileNameJoin[{$mcHome, "libraries"}]];
    b = dirBytes[FileNameJoin[{$mcHome, "assets"}]];
-   c = dirBytes[FileNameJoin[{$mcHome, "versions"}]];
+   c = dirBytes[$mcVersions];
    Print["    libraries   ", humanBytes[a]];
    Print["    assets      ", humanBytes[b]];
    Print["    versions    ", humanBytes[c]];
@@ -595,7 +598,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      "6", cfg = editCfg[cfg, "game"],
      "7", cfg = acctMenu[cfg],
      "8", cfg = pickLocal[cfg],
-     "9", downloadAsk[cfg],
+     "9", cfg = downloadAsk[cfg],
      "m" | "M", cfg = modMenu[cfg],
      "i" | "I", cfg = instMenu[cfg],
      "r" | "R", cfg = resDownload[cfg],
@@ -606,7 +609,10 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
       If[cfg["account"] === "microsoft",
        a2 = ensureAuth[cfg];
        If[AssociationQ[a2], $auth = a2,
-        Print["[x] \:6b63\:7248\:51ed\:8bc1\:65e0\:6548\:ff0c\:5148\:6309 7 \:91cd\:65b0\:767b\:5f55"]; ready = False]];
+        Print["[x] \:6b63\:7248\:51ed\:8bc1\:65e0\:6548\:ff0c\:5148\:6309 7 \:91cd\:65b0\:767b\:5f55"]; ready = False],
+       $auth = <|"name" -> cfg["user"],
+         "uuid" -> "00000000000000000000000000000000",
+         "token" -> "0", "type" -> "legacy"|>];
       If[ready,
        t0 = AbsoluteTime[];
        r = run[cfg];
@@ -780,23 +786,26 @@ switchAccount[cfg_Association] := Module[{l, cur, t, i, j, chosen},
    i = Quiet@Check[ToExpression[t], $Failed];
    If[! (IntegerQ[i] && 1 <= i <= Length[l]), Return[cfg]];
    chosen = l[[i]];
-   $auth = <|"name" -> chosen["name"], "uuid" -> chosen["uuid"],
+   $auth = <|"name" -> Lookup[chosen, "name", "?"], "uuid" -> chosen["uuid"],
      "token" -> Lookup[chosen, "token", "0"], "type" -> "msa"|>;
-   Print["==> \:5df2\:5207\:5230 ", chosen["name"]];
+   Print["==> \:5df2\:5207\:5230 ", Lookup[chosen, "name", "?"]];
    Join[cfg, <|"account" -> "microsoft", "active" -> chosen["uuid"]|>]];
 
 delAccount[cfg_Association] := Module[{l, cur, t, i, j, victim},
    l = loadAccounts[];
    If[l === {}, Print["  \:6ca1\:6709\:53ef\:5220\:7684\:8d26\:53f7"]; Return[cfg]];
    cur = If[AssociationQ[activeAccount[cfg]], activeAccount[cfg]["uuid"], ""];
-   Do[Print["   ", j, ") ", l[[j]]["name"]], {j, Length[l]}];
+   Do[Print["   ", j, ") ", Lookup[l[[j]], "name", "?"]], {j, Length[l]}];
    t = askLine["  \:5220\:54ea\:4e2a > "];
    i = Quiet@Check[ToExpression[t], $Failed];
    If[! (IntegerQ[i] && 1 <= i <= Length[l]), Return[cfg]];
    victim = l[[i]];
    removeAccount[victim["uuid"]];
-   Print["==> \:5df2\:5220\:9664 ", victim["name"]];
+   Print["==> \:5df2\:5220\:9664 ", Lookup[victim, "name", "?"]];
    If[victim["uuid"] === cur,
+    $auth = <|"name" -> cfg["user"],
+      "uuid" -> "00000000000000000000000000000000",
+      "token" -> "0", "type" -> "legacy"|>;
     Join[cfg, <|"account" -> "offline", "active" -> ""|>], cfg]];
 
 acctMenu[cfg0_Association] := Module[{c, cfg = cfg0},
@@ -874,6 +883,11 @@ downloadAsk[cfg0_] := Module[{cfg = cfg0, m, rel, c, i, gv, r, lc, f,
        Print["  ==> \:5df2\:4e0b ", name, "  (", humanBytes[size], ")"]]]]];
    cfg];
 
+(* ---------------- \:6a21\:7ec4\:52a0\:8f7d\:5668 ---------------- *)
+$fabricMeta = "https://meta.fabricmc.net/v2";
+$forgeMaven = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+$neoForgeMaven = "https://bmclapi2.bangbang93.com/maven";
+
 loaderLabel[cfg_] := Which[
    Lookup[cfg, "loader", ""] === "fabric",
     "Fabric " <> If[Lookup[cfg, "loaderVer", ""] === "", "(\:6700\:65b0)", cfg["loaderVer"]],
@@ -925,12 +939,15 @@ neoForgeVersions[gv_] := Module[{f, txt, vs, pre},
      ! StringContainsQ[#, "-"] &];
    SortBy[vs, ToExpression /@ StringSplit[#, "."] &]];
 
-installNeoForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json},
+installNeoForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json, lp},
    id2 = "neoforge-" <> fv;
    json = FileNameJoin[{$mcVersions, id2, id2 <> ".json"}];
    If[FileExistsQ[json], Return[json]];
    d = FileNameJoin[{$mcHome, "forge"}];
    ensureDir[d];
+   lp = FileNameJoin[{$mcHome, "launcher_profiles.json"}];
+   If[! FileExistsQ[lp],
+    Export[lp, "{\"profiles\":{},\"settings\":{},\"version\":3}", "Text"]];
    url = $neoForgeMaven <> "/net/neoforged/neoforge/" <> fv <>
      "/neoforge-" <> fv <> "-installer.jar";
    inst = FileNameJoin[{d, "neoforge-" <> fv <> "-installer.jar"}];
@@ -958,6 +975,18 @@ loadVersionJson[id_String] := Module[{f, j, pid, pj},
     If[AssociationQ[pj], Return[mergeInherited[pj, j]]]];
    j];
 
+(* 按 Maven 坐标去重；版本号不进 key，子版本的同名库覆盖父版本 *)
+libKey[lib_] := Module[{p = StringSplit[Lookup[lib, "name", ""], ":"]},
+   Which[
+    Length[p] >= 4, p[[1]] <> ":" <> p[[2]] <> ":" <> p[[4]],
+    Length[p] == 3, p[[1]] <> ":" <> p[[2]],
+    True, Lookup[lib, "name", ToString[Hash[lib]]]]];
+
+mergeLibList[baseLibs_List, childLibs_List] := Module[{m},
+   m = Association[Map[libKey[#] -> # &, baseLibs]];
+   Do[m[libKey[l]] = l, {l, childLibs}];
+   Values[m]];
+
 mergeInherited[base_, child_] := Module[{m, aa, ab, c},
    m = base;
    Do[
@@ -970,7 +999,7 @@ mergeInherited[base_, child_] := Module[{m, aa, ab, c},
     {k, {"id", "mainClass", "minecraftArguments", "type", "assets",
       "assetIndex", "javaVersion", "downloads", "logging",
       "complianceLevel", "releaseTime", "time"}}];
-   m["libraries"] = Join[Lookup[base, "libraries", {}],
+   m["libraries"] = mergeLibList[Lookup[base, "libraries", {}],
      Lookup[child, "libraries", {}]];
    aa = Lookup[base, "arguments", <||>];
    ab = Lookup[child, "arguments", <||>];
@@ -1046,14 +1075,18 @@ installLoader[cfg0_Association, base0_String : "", lc0_String : ""] := Module[{c
      ensureDir[DirectoryName[f]];
      Export[f, j, "JSON"],
     "2",
-     lv = Last[forgeVersions[base]];
+     lv = forgeVersions[base];
+     If[lv === {}, Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 Forge"]; Return[cfg]];
+     lv = Last[lv];
      If[lv === "", Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 Forge"]; Return[cfg]];
      lv2 = askLine["  Forge \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> lv <> "\:ff09> "];
      If[StringQ[lv2] && StringTrim[lv2] =!= "", lv = StringTrim[lv2]];
      If[installForge[base, lv, java] === $Failed, Return[cfg]];
      id2 = base <> "-forge-" <> lv,
     "3",
-     lv = Last[neoForgeVersions[base]];
+     lv = neoForgeVersions[base];
+     If[lv === {}, Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 NeoForge"]; Return[cfg]];
+     lv = Last[lv];
      If[lv === "", Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 NeoForge"]; Return[cfg]];
      lv2 = askLine["  NeoForge \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> lv <> "\:ff09> "];
      If[StringQ[lv2] && StringTrim[lv2] =!= "", lv = StringTrim[lv2]];
@@ -1080,6 +1113,7 @@ installForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json, lp},
    url = $forgeMaven <> "/" <> gv <> "-" <> fv <> "/forge-" <> gv <> "-" <> fv <> "-installer.jar";
    inst = FileNameJoin[{d, "forge-" <> gv <> "-" <> fv <> "-installer.jar"}];
    If[! FileExistsQ[inst] || FileByteCount[inst] < 1000000,
+    Quiet@Check[DeleteFile[inst], Null];
     If[dl[url, inst] === $Failed,
      Print["    [x] Forge \:5b89\:88c5\:5668\:4e0b\:8f7d\:5931\:8d25"]; Return[$Failed]]];
    Print["    \:8fd0\:884c Forge \:5b89\:88c5\:5668\:ff08\:7b2c\:4e00\:6b21\:8981\:4e0b\:51e0\:5341 MB\:ff09\:2026"];
@@ -1175,6 +1209,7 @@ loaderOf[id_String] := Which[
    StringContainsQ[id, "forge"], "forge",
    StringContainsQ[id, "fabric"], "fabric",
    True, "vanilla"];
+loaderOf[_] := "vanilla";
 
 loaderName[l_String] := Switch[l,
    "fabric", "Fabric",
@@ -1182,12 +1217,13 @@ loaderName[l_String] := Switch[l,
    "neoforge", "NeoForge",
    _, "\:539f\:7248"];
 
-modKind[jar_String] := Module[{r},
-   r = Quiet@Check[RunProcess[{"unzip", "-l", jar}]["StandardOutput"], ""];
+modKind[jar_String] := Module[{es},
+   es = Quiet@Check[Import[jar, "ZIP"], {}];
+   If[! ListQ[es], es = {}];
    Which[
-    StringContainsQ[r, "fabric.mod.json"], "fabric",
-    StringContainsQ[r, "META-INF/neoforge.mods.toml"], "neoforge",
-    StringContainsQ[r, "META-INF/mods.toml"], "forge",
+    AnyTrue[es, StringQ[#] && StringEndsQ[#, "fabric.mod.json"] &], "fabric",
+    AnyTrue[es, StringQ[#] && StringEndsQ[#, "META-INF/neoforge.mods.toml"] &], "neoforge",
+    AnyTrue[es, StringQ[#] && StringEndsQ[#, "META-INF/mods.toml"] &], "forge",
     True, "unknown"]];
 
 modsDirOf[cfg_Association] := FileNameJoin[{gameDirOf[cfg], "mods"}];
@@ -1217,7 +1253,12 @@ printMods[cfg_Association] := Module[{ms, ld},
 
 modDownload[cfg_Association] := Module[{ld, gv, q, hits, i, hit, vers, f, dir,
     dest, name, size, k},
-   gv = baseOf[cfg["version"]];
+   gv = If[cfg["version"] === Automatic,
+     Module[{m = getJson[$manifestUrl]},
+      If[AssociationQ[m], m["latest", "release"], ""]],
+     baseOf[cfg["version"]]];
+   If[! StringQ[gv] || gv === "",
+    Print["  [x] \:62c9\:4e0d\:5230\:7248\:672c\:6e05\:5355"]; Return[cfg]];
    ld = loaderOf[cfg["version"]];
    If[ld === "vanilla",
     Print["  [!] \:539f\:7248\:6ca1\:6709\:6a21\:7ec4\:52a0\:8f7d\:5668\:ff0c\:5148\:6309 m \:4e0a\:9762\:7684 a \:88c5\:4e00\:4e2a\:518d\:4e0b\:6a21\:7ec4"]; Return[cfg]];
@@ -1277,7 +1318,13 @@ modMenu[cfg0_Association] := Module[{cfg = cfg0, c, ms, i},
         Quiet@Check[DeleteFile[ms[[i]]["file"]], Null];
         Print["  ==> \:5df2\:5220\:9664 ", ms[[i]]["name"]],
         Print["  \:5e8f\:53f7\:4e0d\:5bf9"]]],
-     "3", Quiet@Check[RunProcess[{"xdg-open", modsDirOf[cfg]}], Null],
+     "3",
+      Module[{d = modsDirOf[cfg]},
+       ensureDir[d];
+       Quiet@Check[RunProcess[Which[
+          $osName === "windows", {"explorer", d},
+          $osName === "osx", {"open", d},
+          True, {"xdg-open", d}]], Null]],
      "0" | "", Return[cfg],
      _, Print["  ? \:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
    cfg];
