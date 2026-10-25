@@ -196,13 +196,13 @@ pickJava[need_Integer : 0] := Module[{info, exact, higher},
 
 (* ---------------- 配置持久化 ---------------- *)
 $cfgFile = FileNameJoin[{$mcHome, "wl-launcher.conf"}];
-$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active", "instance"};
+$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active", "instance", "loader", "loaderVer"};
 
 $defaultCfg = <|
    "version" -> Automatic, "user" -> "Steve", "ram" -> "4G",
    "size" -> "1280x720", "jvm" -> "", "game" -> "",
    "account" -> "offline", "active" -> "",
-   "instance" -> "default"|>;
+   "instance" -> "default", "loader" -> "", "loaderVer" -> ""|>;
 
 loadCfg[] := Module[{g, inst, f, base},
    g = readConf[$cfgFile];
@@ -441,6 +441,7 @@ printMenu[cfg_] := (
    Print["  9) \:4e0b\:8f7d\:7248\:672c    \:88c5\:4e00\:4e2a\:65b0\:7684"];
    Print["  i) \:5b9e\:4f8b        ", cfg["instance"]];
    Print["  r) \:8d44\:6e90\:4e0b\:8f7d    \:8d44\:6e90\:5305\:ff08Modrinth\:ff09"];
+   Print["  m) \:52a0\:8f7d\:5668      ", loaderLabel[cfg]];
    Print["  d) \:78c1\:76d8\:5360\:7528"];
    Print["  --------------------------------------------"];
    Print["  s) \:542f\:52a8\:6e38\:620f"];
@@ -528,6 +529,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      "9", downloadAsk[cfg],
      "i" | "I", cfg = instMenu[cfg],
      "r" | "R", cfg = resDownload[cfg],
+     "m" | "M", cfg = loaderMenu[cfg],
      "d" | "D", printDisk[],
      "s" | "S",
       ready = True;
@@ -772,6 +774,130 @@ downloadAsk[cfg_] := Module[{c, r},
        r["objs"], " \:4e2a\:8d44\:6e90"]]]];
 
 (* ---------------- \:8d44\:6e90\:4e0b\:8f7d ---------------- *)
+(* ---------------- \:6a21\:7ec4\:52a0\:8f7d\:5668 ---------------- *)
+$fabricMeta = "https://meta.fabricmc.net/v2";
+$forgeMaven = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+
+loaderLabel[cfg_] := Which[
+   Lookup[cfg, "loader", ""] === "fabric",
+    "Fabric " <> If[Lookup[cfg, "loaderVer", ""] === "", "(\:6700\:65b0)", cfg["loaderVer"]],
+   Lookup[cfg, "loader", ""] === "forge",
+    "Forge " <> If[Lookup[cfg, "loaderVer", ""] === "", "(\:6700\:65b0)", cfg["loaderVer"]],
+   True, "\:539f\:7248"];
+
+fabricLatest[] := Module[{j},
+   j = getJson[$fabricMeta <> "/versions/loader"];
+   If[! ListQ[j] || j === {}, Return[""]];
+   Lookup[First[j], "version", ""]];
+
+fabricJson[gv_, lv_] := getJson[$fabricMeta <> "/versions/loader/" <> gv <> "/" <> lv <> "/profile/json"];
+
+forgeVersions[gv_] := Module[{f, txt, vs},
+   f = FileNameJoin[{$TemporaryDirectory, "forge-meta-" <> gv <> ".xml"}];
+   If[Quiet@Check[URLDownload[$forgeMaven <> "/maven-metadata.xml", f,
+        TimeConstraint -> 120], $Failed] === $Failed, Return[{}]];
+   txt = Quiet@Check[Import[f, "Text"], ""];
+   If[! StringQ[txt], Return[{}]];
+   vs = StringCases[txt, "<version>" ~~ v : (Except["<"] ..) ~~ "</version>" :> v];
+   Sort[DeleteDuplicates[
+     StringTake[#, StringLength[gv] + 2 ;;] & /@
+      Select[vs, StringStartsQ[#, gv <> "-"] &]]]];
+
+mergeVersion[base_, extra_] := Module[{bl, el, ba, ea},
+   bl = Lookup[base, "libraries", {}];
+   el = Lookup[extra, "libraries", {}];
+   ba = Lookup[base, "arguments", <||>];
+   ea = Lookup[extra, "arguments", <||>];
+   Join[base,
+    <|"mainClass" -> Lookup[extra, "mainClass", Lookup[base, "mainClass", ""]],
+      "libraries" -> Join[bl, el],
+      "arguments" -> <|
+        "game" -> Join[Lookup[ba, "game", {}], Lookup[ea, "game", {}]],
+        "jvm" -> Join[Lookup[ba, "jvm", {}], Lookup[ea, "jvm", {}]]|>|>]];
+
+installForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json, lp},
+   d = FileNameJoin[{$mcHome, "forge"}];
+   ensureDir[d];
+   (* Forge 安装器要求存在官方启动器的 profile 文件，否则直接报错退出 *)
+   lp = FileNameJoin[{$mcHome, "launcher_profiles.json"}];
+   If[! FileExistsQ[lp],
+    Export[lp, "{\"profiles\":{},\"settings\":{},\"version\":3}", "Text"]];
+   url = $forgeMaven <> "/" <> gv <> "-" <> fv <> "/forge-" <> gv <> "-" <> fv <> "-installer.jar";
+   inst = FileNameJoin[{d, "forge-" <> gv <> "-" <> fv <> "-installer.jar"}];
+   If[dl[url, inst] === $Failed,
+    Print["    [x] Forge \:5b89\:88c5\:5668\:4e0b\:8f7d\:5931\:8d25"]; Return[$Failed]];
+   Print["    \:8fd0\:884c Forge \:5b89\:88c5\:5668\:ff08\:7b2c\:4e00\:6b21\:8981\:4e0b\:51e0\:5341 MB\:ff09\:2026"];
+   r = Quiet@Check[RunProcess[{java, "-jar", inst, "--installClient", $mcHome}], $Failed];
+   If[r === $Failed, Print["    [x] \:5b89\:88c5\:5668\:65e0\:6cd5\:542f\:52a8"]; Return[$Failed]];
+   If[r["ExitCode"] =!= 0,
+    Print["    [x] \:5b89\:88c5\:5668\:9000\:51fa\:7801 ", r["ExitCode"]];
+    Print["    ", StringTake[r["StandardOutput"], UpTo[400]]];
+    Return[$Failed]];
+   id2 = gv <> "-forge-" <> fv;
+   json = FileNameJoin[{$mcVersions, id2, id2 <> ".json"}];
+   If[FileExistsQ[json], json, Return[$Failed]]];
+
+loaderJson[cfg_, java_, gv_] := Module[{lv, j},
+   lv = Lookup[cfg, "loaderVer", ""];
+   Which[
+    Lookup[cfg, "loader", ""] === "fabric",
+     If[lv === "", lv = fabricLatest[]];
+     If[lv === "", Print["    [x] \:62ff\:4e0d\:5230 Fabric \:7248\:672c\:5217\:8868"]; Return[$Failed]];
+     j = fabricJson[gv, lv];
+     If[! AssociationQ[j], Print["    [x] Fabric \:914d\:7f6e\:83b7\:53d6\:5931\:8d25"]; Return[$Failed]];
+     Print["    \:52a0\:8f7d\:5668 : Fabric ", lv];
+     j,
+    Lookup[cfg, "loader", ""] === "forge",
+     If[lv === "", lv = Last[forgeVersions[gv]]];
+     If[lv === "", Print["    [x] ", gv, " \:6ca1\:6709\:53ef\:7528\:7684 Forge"]; Return[$Failed]];
+     j = installForge[gv, lv, java];
+     If[j === $Failed, Return[$Failed]];
+     j = Quiet@Check[Import[j, "RawJSON"], $Failed];
+     If[! AssociationQ[j], Print["    [x] Forge \:914d\:7f6e\:8bfb\:53d6\:5931\:8d25"]; Return[$Failed]];
+     Print["    \:52a0\:8f7d\:5668 : Forge ", lv];
+     j,
+    True, $Failed]];
+
+loaderMenu[cfg0_Association] := Module[{c, cfg = cfg0, lv, vs, i, gv},
+   While[True,
+    Print[""];
+    Print["  \:6a21\:7ec4\:52a0\:8f7d\:5668   \:5f53\:524d: ", loaderLabel[cfg]];
+    Print["  --------------------------------------------"];
+    Print["  1) \:539f\:7248\:ff08\:4e0d\:5e26\:52a0\:8f7d\:5668\:ff09"];
+    Print["  2) Fabric"];
+    Print["  3) Forge"];
+    Print["  0) \:8fd4\:56de"];
+    c = askLine["  \:9009\:62e9 > "];
+    If[c === $Failed || c === "" || c === "0", Return[cfg]];
+    gv = mcVersionId[cfg];
+    Switch[c,
+     "1",
+      cfg = Join[cfg, <|"loader" -> "", "loaderVer" -> ""|>];
+      Print["  ==> \:5df2\:5207\:56de\:539f\:7248"],
+     "2",
+      lv = fabricLatest[];
+      If[lv === "",
+       Print["  [x] \:62ff\:4e0d\:5230 Fabric \:7248\:672c\:5217\:8868"];
+       cfg = Join[cfg, <|"loader" -> "fabric", "loaderVer" -> ""|>];
+       Print["  ==> \:52a0\:8f7d\:5668 Fabric\:ff08\:6700\:65b0\:ff09"],
+       Print["  \:6700\:65b0 Fabric Loader: ", lv, "\:ff0c\:76f4\:63a5\:56de\:8f66\:5c31\:7528\:5b83 > "];
+       i = askLine["  \:7248\:672c > "];
+       If[i =!= $Failed,
+        i = If[StringTrim[i] === "", lv, StringTrim[i]];
+        cfg = Join[cfg, <|"loader" -> "fabric", "loaderVer" -> i|>];
+        Print["  ==> \:52a0\:8f7d\:5668 Fabric ", i]]],
+     "3",
+      vs = forgeVersions[gv];
+      If[vs === {}, Print["  [x] ", gv, " \:8fd8\:6ca1\:6709 Forge"]; Return[cfg]];
+      Print["  ", gv, " \:53ef\:7528 Forge: ", StringRiffle[Take[vs, -5], " / "]];
+      i = askLine["  \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> Last[vs] <> "\:ff09> "];
+      If[i =!= $Failed,
+       i = If[StringTrim[i] === "", Last[vs], StringTrim[i]];
+       cfg = Join[cfg, <|"loader" -> "forge", "loaderVer" -> i|>];
+       Print["  ==> \:52a0\:8f7d\:5668 Forge ", i]],
+     _, Print["  ? \:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
+   cfg];
+
 $modrinthApi = "https://api.modrinth.com/v2";
 
 mrSearch[q_String, type_String, n_Integer : 8] := Module[{u, j},
@@ -849,7 +975,7 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    legacy, na, jvmArgsRaw, gameArgsRaw,
    cmd, proc, line, n = 0, vars, logCfg, logPath, logArg, ai, aif,
    aIdx, objs2, assetRoot, missing, n2, missMB, dlOne, failCount,
-   deadline, sz, printed = 0},
+   deadline, sz, printed = 0, extra, waitSec},
    manifest = getJson[$manifestUrl];
 
    id = If[cfg["version"] === Automatic,
@@ -888,6 +1014,11 @@ run[cfg_Association, mode_String : "launch"] := Module[{
     Print["    [!] \:8fd9\:4e2a\:7248\:672c\:9700\:8981 Java ", needJava,
      "+\:ff0c\:5f53\:524d\:53ea\:6709 Java ", Last[javaInfo],
      "\:ff0c\:53ef\:80fd\:65e0\:6cd5\:542f\:52a8"]];
+   If[mode =!= "download" && Lookup[cfg, "loader", ""] =!= "",
+    extra = loaderJson[cfg, java, id];
+    If[extra === $Failed,
+     Print["[x] \:6a21\:7ec4\:52a0\:8f7d\:5668\:51c6\:5907\:5931\:8d25"]; Return[$Failed]];
+    verJson = mergeVersion[verJson, extra]];
    Print["    \:4e3b\:7c7b   : ", verJson["mainClass"]];
 
    (* --- client.jar --- *)
@@ -906,6 +1037,13 @@ run[cfg_Association, mode_String : "launch"] := Module[{
       Do[
        (* 普通 artifact（含 1.19+ 的 natives 变体，它们本身就在 artifact 里） *)
        art = Lookup[Lookup[lib, "downloads", <||>], "artifact", None];
+       If[! AssociationQ[art] && StringQ[Lookup[lib, "url", None]],
+        Module[{rl, dp, uu},
+         rl = libRelPath[lib["name"]];
+         If[rl =!= $Failed,
+          dp = FileNameJoin[{$mcLibs, rl}];
+          uu = StringReplace[Lookup[lib, "url", ""] <> StringReplace[rl, "\\" -> "/"], "\\" -> "/"];
+          If[dl[uu, dp] =!= $Failed, Sow[dp]; n++]]]];
        If[AssociationQ[art],
         (* 关键：用清单给的 path。同一 Maven 坐标可能有主 jar+多个 natives 变体，
            自己按 name 推算会把它们算成同一个文件互相覆盖 *)
@@ -1087,7 +1225,9 @@ run[cfg_Association, mode_String : "launch"] := Module[{
     Print["[x] \:8fdb\:7a0b\:542f\:52a8\:5931\:8d25"]; Return[$Failed]];
 
    (* 启动后盯 10 秒日志，把关键输出转出来 *)
-   deadline = AbsoluteTime[] + 10;
+   waitSec = Quiet@Check[ToExpression[envOr["MCLAUNCH_WAIT", "10"]], 10];
+   If[! NumberQ[waitSec], waitSec = 10];
+   deadline = AbsoluteTime[] + waitSec;
    While[AbsoluteTime[] < deadline,
     line = Quiet@Check[TimeConstrained[ReadLine[proc], 0.3, $noData], $noData];
     If[StringQ[line],

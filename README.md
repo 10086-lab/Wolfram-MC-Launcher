@@ -162,6 +162,24 @@ wolframscript -file mclaunch.wl
 
 下完进游戏，`选项 → 资源包`，左边列表里点一下装上，再点箭头移到右边启用。
 
+### 模组加载器
+
+按 `m` 选加载器，菜单里跟上：
+
+```
+  1) 原版（不带加载器）
+  2) Fabric
+  3) Forge
+```
+
+**Fabric** 走纯 API：按当前 MC 版本向 `meta.fabricmc.net` 要一份 profile，合并主类和库，直接启动，不装任何东西。默认用最新 loader，也可以自己填版本号。
+
+**Forge** 需要跑官方安装器：启动器先下 `forge-<mc>-<ver>-installer.jar`，再用当前 Java 执行 `--installClient`，装完读生成的版本 JSON 合并。第一次会慢一些（安装器自己还要下几十 MB），之后就走缓存了。
+
+Forge 的版本跟着 MC 版本走——不是每个 MC 版本都有 Forge，选之前会先列出来。比如 `26.3` 有 `66.1.0`，但 `26.2` 官方没发。
+
+加载器信息存在配置里（`loader` / `loaderVer`），换实例互不影响。装完 Fabric 后把 `fabric-api` 之类的 mod 丢进当前实例的 `mods/` 就能用。
+
 ## 数据目录
 
 默认位置跟官方启动器一致：
