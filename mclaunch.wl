@@ -360,6 +360,13 @@ pickDir[] := Module[{cmd, r, p, to},
       {"/usr/bin/kdialog", "--getexistingdirectory", $HomeDirectory},
      $osName === "osx",
       {"osascript", "-e", "POSIX path of (choose folder with prompt \"\:9009\:62e9\:6e38\:620f\:76ee\:5f55\")"},
+     $osName === "windows",
+      {"powershell.exe", "-NoProfile", "-STA", "-Command",
+       "Add-Type -AssemblyName System.Windows.Forms;" <>
+        "$f=New-Object System.Windows.Forms.FolderBrowserDialog;" <>
+        "$f.Description='Select game directory';" <>
+        "$f.ShowNewFolderButton=$true;" <>
+        "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}else{''}"},
      True, {}];
    If[cmd === {}, Return[""]];
    to = Quiet@Check[ToExpression[envOr["MCLAUNCH_PICK_TIMEOUT", "0"]], 0];
