@@ -196,29 +196,38 @@ pickJava[need_Integer : 0] := Module[{info, exact, higher},
 
 (* ---------------- 配置持久化 ---------------- *)
 $cfgFile = FileNameJoin[{$mcHome, "wl-launcher.conf"}];
-$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active"};
+$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active", "instance"};
 
 $defaultCfg = <|
    "version" -> Automatic, "user" -> "Steve", "ram" -> "4G",
    "size" -> "1280x720", "jvm" -> "", "game" -> "",
-   "account" -> "offline", "active" -> ""|>;
+   "account" -> "offline", "active" -> "",
+   "instance" -> "default"|>;
 
-loadCfg[] := Module[{lines, pairs, cfg},
-   If[! FileExistsQ[$cfgFile], Return[$defaultCfg]];
-   lines = Select[Import[$cfgFile, "Lines"],
-     StringContainsQ[#, "="] && ! StringStartsQ[StringTrim[#], "#"] &];
-   pairs = DeleteCases[
-     Function[l, With[{q = StringSplit[l, "=", 2]},
-        If[Length[q] === 2, StringTrim[q[[1]]] -> StringTrim[q[[2]]],
-         Missing["x"]]]] /@ lines, _Missing];
-   cfg = Merge[{KeyTake[$defaultCfg, $cfgKeys],
-      KeyTake[Association[pairs], $cfgKeys]}, Last];
-   If[cfg["version"] === "", cfg["version"] = Automatic];
-   cfg];
+loadCfg[] := Module[{g, inst, f, base},
+   g = readConf[$cfgFile];
+   If[g === <||>, g = $defaultCfg];
+   inst = Lookup[g, "instance", "default"];
+   If[! StringQ[inst] || inst === "", inst = "default"];
+   f = instCfgPath[inst];
+   base = If[f === $cfgFile, g,
+     If[FileExistsQ[f], Merge[{g, readConf[f]}, Last], g]];
+   base = Merge[{KeyTake[$defaultCfg, $cfgKeys],
+      KeyTake[base, $cfgKeys]}, Last];
+   base["instance"] = inst;
+   If[base["version"] === "", base["version"] = Automatic];
+   base];
 
-saveCfg[cfg_] := Module[{lines},
-   lines = Function[k, k <> "=" <> Replace[cfg[k], Automatic -> ""]] /@ $cfgKeys;
-   Export[$cfgFile, StringRiffle[lines, "\n"] <> "\n", "Text"]];
+saveCfg[cfg_] := Module[{inst, def},
+   inst = Lookup[cfg, "instance", "default"];
+   If[! StringQ[inst] || inst === "", inst = "default"];
+   If[inst === "default",
+    writeConf[$cfgFile, cfg],
+    def = readConf[$cfgFile];
+    If[def === <||>, def = $defaultCfg];
+    def["instance"] = inst;
+    writeConf[$cfgFile, def];
+    writeConf[instCfgPath[inst], cfg]]];
 (* ---------------- \:591a\:8d26\:53f7\:5e93 ---------------- *)
 (* \:6bcf\:4e2a\:8d26\:53f7\:5b58 name/uuid/token/refresh/expires\:ff0cconf \:91cc\:7684 active \:6307\:5411\:5f53\:524d\:9009\:4e2d\:7684 uuid\:3002
    \:8001\:7684 wl-launcher-token.json \:7b2c\:4e00\:6b21\:52a0\:8f7d\:65f6\:81ea\:52a8\:5e76\:5165\:3002 *)
@@ -273,6 +282,106 @@ accountLabel[cfg_] := Module[{l, a},
     ToString[Length[l]] <> " \:4e2a"];
 
 (* ---------------- 小工具 ---------------- *)
+(* ---------------- \:591a\:5b9e\:4f8b ---------------- *)
+$instRoot = FileNameJoin[{$mcHome, "instances"}];
+
+(* default \:5b9e\:4f8b\:7684\:76ee\:5f55\:5c31\:662f ~/.minecraft \:672c\:8eab\:ff0c\:8001\:5b58\:6863\:4ecd\:7136\:53ef\:89c1 *)
+instDir[inst_String] := If[inst === "default", $mcHome,
+   FileNameJoin[{$instRoot, inst}]];
+
+instCfgPath[inst_String] := If[inst === "default", $cfgFile,
+   FileNameJoin[{$instRoot, inst, "launcher.conf"}]];
+
+instanceNames[] := Module[{d},
+   d = If[DirectoryQ[$instRoot],
+     Quiet@Check[Select[FileNameTake /@ FileNames[$instRoot <> "/*"],
+        DirectoryQ[FileNameJoin[{$instRoot, #}]] &], {}], {}];
+   Prepend[DeleteCases[Sort[d], "default"], "default"]];
+
+readConf[file_String] := Module[{lines, pairs},
+   If[! FileExistsQ[file], Return[<||>]];
+   lines = Select[Import[file, "Lines"],
+     StringContainsQ[#, "="] && ! StringStartsQ[StringTrim[#], "#"] &];
+   pairs = DeleteCases[
+     Function[l, With[{q = StringSplit[l, "=", 2]},
+        If[Length[q] === 2, StringTrim[q[[1]]] -> StringTrim[q[[2]]],
+         Missing["x"]]]] /@ lines, _Missing];
+   Association[pairs]];
+
+writeConf[file_String, cfg_Association] := Module[{lines},
+   ensureDir[DirectoryName[file]];
+   lines = Function[k, k <> "=" <> Replace[Lookup[cfg, k, ""], Automatic -> ""]] /@ $cfgKeys;
+   Export[file, StringRiffle[lines, "\n"] <> "\n", "Text"]];
+
+gameDirOf[cfg_Association] := instDir[Lookup[cfg, "instance", "default"]];
+
+switchTo[name_String] := Module[{def},
+   def = readConf[$cfgFile];
+   If[def === <||>, def = $defaultCfg];
+   def["instance"] = name;
+   writeConf[$cfgFile, def]];
+
+makeInstance[name_String, cfg_Association] := Module[{new},
+   ensureDir[instDir[name]];
+   new = Join[cfg, <|"instance" -> name|>];
+   new];
+
+deleteInstance[name_String] := (
+   If[name === "default", Return[False]];
+   If[DirectoryQ[instDir[name]],
+    Quiet@Check[DeleteDirectory[instDir[name], DeleteContents -> True], Null]];
+   True);
+
+instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim},
+   While[True,
+    ns = instanceNames[];
+    Print[""];
+    Print["  ", "\:5b9e\:4f8b\:7ba1\:7406", "  (\:5f53\:524d: ", cfg["instance"], ")"];
+    Print["  --------------------------------------------"];
+    Scan[Function[n,
+       Print["   ", If[n === cfg["instance"], "*", " "], " ", n]],
+      ns];
+    Print["  --------------------------------------------"];
+    Print["  1) ", "\:5207\:6362", "   2) ", "\:65b0\:5efa", "   3) ", "\:5220\:9664", "   0) ", "\:8fd4\:56de"];
+    c = askLine["  \:9009\:62e9 > "];
+    If[c === $Failed, Return[cfg]];
+    Switch[c,
+     "1",
+      i = askLine["  \:5207\:6362\:5230\:54ea\:4e2a > "];
+      If[StringQ[i] && MemberQ[ns, StringTrim[i]] &&
+         StringTrim[i] =!= cfg["instance"],
+       saveCfg[cfg];
+       switchTo[StringTrim[i]];
+       cfg = loadCfg[];
+       Print["  ==> ", "\:5df2\:5207\:5230\:5b9e\:4f8b ", cfg["instance"]],
+       Print["  \:6ca1\:6709\:8fd9\:4e2a\:5b9e\:4f8b\:ff0c\:6216\:5df2\:7ecf\:662f\:5f53\:524d\:5b9e\:4f8b"]],
+     "2",
+      name = askLine["  \:65b0\:5b9e\:4f8b\:540d > "];
+      If[StringQ[name] && StringTrim[name] =!= "" &&
+         ! MemberQ[ns, StringTrim[name]],
+       name = StringTrim[name];
+       cfg = makeInstance[name, cfg];
+       saveCfg[cfg];
+       Print["  ==> ", "\:5df2\:521b\:5efa\:5b9e\:4f8b ", name],
+       Print["  \:540d\:5b57\:4e3a\:7a7a\:6216\:5df2\:5b58\:5728"]],
+     "3",
+      victim = askLine["  \:5220\:9664\:54ea\:4e2a > "];
+      If[StringQ[victim] && MemberQ[ns, StringTrim[victim]],
+       victim = StringTrim[victim];
+       If[victim === "default",
+        Print["  default \:5b9e\:4f8b\:4e0d\:80fd\:5220\:9664"],
+        Print["  \:786e\:5b9a\:5220\:9664 ", victim, " \:5417\:ff1f\:8f93\:5165 yes \:786e\:8ba4 > "];
+        If[askLine["  > "] === "yes",
+         deleteInstance[victim];
+         If[cfg["instance"] === victim,
+          switchTo["default"]; cfg = loadCfg[]];
+         Print["  ==> ", "\:5df2\:5220\:9664 ", victim],
+         Print["  \:5df2\:53d6\:6d88"]]],
+       Print["  \:6ca1\:6709\:8fd9\:4e2a\:5b9e\:4f8b"]],
+     "0" | "", Return[cfg],
+     _, Print["  ? ", "\:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
+   cfg];
+
 localVersions[] := Module[{names},
    If[! DirectoryQ[$mcVersions], Return[{}]];
    names = FileNameTake /@ Quiet@Check[FileNames[$mcVersions <> "/*"], {}];
@@ -330,6 +439,8 @@ printMenu[cfg_] := (
    Print["  7) \:8d26\:53f7        ", accountLabel[cfg]];
    Print["  8) \:672c\:5730\:7248\:672c    ", Length[localVersions[]], " \:4e2a\:5df2\:5b89\:88c5"];
    Print["  9) \:4e0b\:8f7d\:7248\:672c    \:88c5\:4e00\:4e2a\:65b0\:7684"];
+   Print["  i) \:5b9e\:4f8b        ", cfg["instance"]];
+   Print["  r) \:8d44\:6e90\:4e0b\:8f7d    \:8d44\:6e90\:5305\:ff08Modrinth\:ff09"];
    Print["  d) \:78c1\:76d8\:5360\:7528"];
    Print["  --------------------------------------------"];
    Print["  s) \:542f\:52a8\:6e38\:620f"];
@@ -415,6 +526,8 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      "7", cfg = acctMenu[cfg],
      "8", cfg = pickLocal[cfg],
      "9", downloadAsk[cfg],
+     "i" | "I", cfg = instMenu[cfg],
+     "r" | "R", cfg = resDownload[cfg],
      "d" | "D", printDisk[],
      "s" | "S",
       ready = True;
@@ -658,6 +771,75 @@ downloadAsk[cfg_] := Module[{c, r},
       Print["==> ", r["id"], " \:88c5\:597d\:4e86\:ff1a", r["libs"], " \:4e2a\:5e93\:3001",
        r["objs"], " \:4e2a\:8d44\:6e90"]]]];
 
+(* ---------------- \:8d44\:6e90\:4e0b\:8f7d ---------------- *)
+$modrinthApi = "https://api.modrinth.com/v2";
+
+mrSearch[q_String, type_String, n_Integer : 8] := Module[{u, j},
+   u = $modrinthApi <> "/search?limit=" <> ToString[n] <>
+     "&query=" <> URLEncode[q] <>
+     "&facets=" <> URLEncode["[[\"project_type:" <> type <> "\"]]"];
+   j = getJson[u];
+   If[! AssociationQ[j], Return[{}]];
+   Lookup[j, "hits", {}]];
+
+mrVersions[slug_String, gv_String] := Module[{u, j},
+   u = $modrinthApi <> "/project/" <> slug <> "/version?game_versions=" <>
+     URLEncode["[\"" <> gv <> "\"]"];
+   j = getJson[u];
+   If[! ListQ[j], Return[{}]];
+   j];
+
+mcVersionId[cfg_] := Module[{m},
+   If[cfg["version"] =!= Automatic, Return[cfg["version"]]];
+   m = getJson[$manifestUrl];
+   If[AssociationQ[m], m["latest", "release"], "latest"]];
+
+resDownload[cfg0_Association] := Module[{cfg = cfg0, q, hits, i, hit, slug,
+    gv, vers, f, dest, url, name, size, dir, k},
+   gv = mcVersionId[cfg];
+   Print[""];
+   Print["  \:8d44\:6e90\:4e0b\:8f7d  \:ff08\:8d44\:6e90\:5305\:ff0c\:9002\:914d Minecraft ", gv, "\:ff09"];
+   Print["  --------------------------------------------"];
+   q = askLine["  \:641c\:7d22\:5173\:952e\:8bcd\:ff08\:56de\:8f66\:8fd4\:56de\:ff09> "];
+   If[! StringQ[q] || StringTrim[q] === "", Return[cfg]];
+   q = StringTrim[q];
+   Print["  \:6b63\:5728\:641c\:7d22\:2026"];
+   hits = mrSearch[q, "resourcepack", 8];
+   If[hits === {}, Print["  [x] \:6ca1\:641c\:5230\:ff0c\:6216\:7f51\:7edc\:4e0d\:901a"]; Return[cfg]];
+   Print["  ==> \:627e\:5230 ", Length[hits], " \:4e2a\:ff1a"];
+   Do[
+    hit = hits[[k]];
+    Print["   ", k, ") ", Lookup[hit, "title", "?"], "    ",
+     Lookup[hit, "downloads", 0], " \:6b21\:4e0b\:8f7d"],
+    {k, Length[hits]}];
+   i = askLine["  \:9009\:4e00\:4e2a\:ff08\:5e8f\:53f7\:ff0c\:56de\:8f66\:53d6\:6d88\:ff09> "];
+   If[! StringQ[i] || StringTrim[i] === "", Return[cfg]];
+   i = Quiet@Check[ToExpression[StringTrim[i]], $Failed];
+   If[! IntegerQ[i] || i < 1 || i > Length[hits],
+    Print["  \:5e8f\:53f7\:4e0d\:5bf9"]; Return[cfg]];
+   hit = hits[[i]];
+   slug = Lookup[hit, "slug", ""];
+   Print["  ==> \:67e5 ", Lookup[hit, "title", slug], " \:9002\:914d ", gv, " \:7684\:6587\:4ef6\:2026"];
+   vers = mrVersions[slug, gv];
+   If[vers === {}, Print["  [x] \:8fd9\:4e2a\:8d44\:6e90\:5305\:6ca1\:6709\:9002\:914d ", gv, " \:7684\:7248\:672c"]; Return[cfg]];
+   f = Lookup[First[vers], "files", {}];
+   If[f === {}, Print["  [x] \:7248\:672c\:91cc\:6ca1\:6709\:53ef\:7528\:6587\:4ef6"]; Return[cfg]];
+   f = First[f];
+   url = Lookup[f, "url", ""];
+   name = Lookup[f, "filename", slug <> ".zip"];
+   size = Lookup[f, "size", 0];
+   dir = FileNameJoin[{gameDirOf[cfg], "resourcepacks"}];
+   ensureDir[dir];
+   dest = FileNameJoin[{dir, name}];
+   Print["  ==> \:4e0b\:8f7d ", name, "  (", humanBytes[size], ")"];
+   Print["      \:5230 ", dir];
+   If[Quiet@Check[URLDownload[url, dest, TimeConstraint -> 300], $Failed] === $Failed,
+    Print["  [x] \:4e0b\:8f7d\:5931\:8d25"],
+    If[FileExistsQ[dest] && (size === 0 || FileByteCount[dest] === size),
+     Print["  ==> \:88c5\:597d\:4e86\:ff0c\:8fdb\:6e38\:620f\:5728\:300c\:9009\:9879 \:2192 \:8d44\:6e90\:5305\:300d\:91cc\:542f\:7528"],
+     Print["  [!] \:6587\:4ef6\:5927\:5c0f\:5bf9\:4e0d\:4e0a\:ff0c\:53ef\:80fd\:6ca1\:4e0b\:5b8c"]]];
+   cfg];
+
 (* ---------------- 主流程 ---------------- *)
 run[cfg_Association, mode_String : "launch"] := Module[{
    manifest, target, verJson, localJson, id, java, javaInfo, needJava, cp,
@@ -838,7 +1020,7 @@ run[cfg_Association, mode_String : "launch"] := Module[{
      "$" <> "{launcher_name}" -> "WolframMC",
      "$" <> "{launcher_version}" -> "1.0",
      "$" <> "{version_name}" -> id,
-     "$" <> "{game_directory}" -> $mcHome,
+     "$" <> "{game_directory}" -> gameDirOf[cfg],
      "$" <> "{assets_root}" -> $mcAssets,
      "$" <> "{assets_index_name}" -> ai["id"],
      "$" <> "{auth_player_name}" -> authName,
