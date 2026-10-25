@@ -162,35 +162,38 @@ wolframscript -file mclaunch.wl
 
 下完进游戏，`选项 → 资源包`，左边列表里点一下装上，再点箭头移到右边启用。
 
-### 模组加载器
+### 版本与模组加载器
 
-加载器是**版本的属性**，不是全局开关。按 `1` 进版本菜单：
-
-```
-  版本   26.3 + Forge 66.1.0
-  1) 改 Minecraft 版本
-  2) 改模组加载器   (Forge 66.1.0)
-  0) 返回
-```
-
-改 MC 版本后会自动校验：新版本没有当前这个加载器，就提示一句并切回原版，不会带着一个不存在的组合去启动。
+版本就是 `~/.minecraft/versions/` 下的一个目录——跟官方启动器、HMCL、Prism 一样。装加载器不是"给当前版本加个开关"，而是**多出一个版本条目**，在 `1) 版本` 的列表里跟原版并排出现：
 
 ```
-  1) 原版（不带加载器）
-  2) Fabric
-  3) Forge
-  4) NeoForge
+  选择要启动的版本：
+   1) 1.19
+   2) 26.2
+   3) 26.3
+   4) 26.3-forge-66.1.0
+   5) neoforge-26.3.0.97
 ```
 
-**Fabric** 走纯 API：按当前 MC 版本向 `meta.fabricmc.net` 要一份 profile，合并主类和库，直接启动，不装任何东西。默认用最新 loader，也可以自己填版本号。
+按 `a` 装新的加载器版本，先选基底原版，再选加载器：
 
-**Forge / NeoForge** 都要跑官方安装器：先下 `forge-<mc>-<ver>-installer.jar` 或 `neoforge-<ver>-installer.jar`，再用当前 Java 执行 `--installClient`，装完读生成的版本 JSON 合并。第一次会慢一些（安装器自己还要下几十 MB），之后走缓存。
+```
+  1) Fabric   2) Forge   3) NeoForge
+```
 
-版本跟着 MC 版本走，不是每个 MC 版本都有——选之前会先列出来。比如 `26.3` 有 Forge `66.1.0` 和 NeoForge `26.3.0.97`，但 `26.2` 官方都没发。NeoForge 的版本号是 `<MC 主次>.<patch>`，MC `1.21.1` 对应 `21.1.x`。
+装完自动切到新条目。
 
-> NeoForge 的官方 maven 在国内直连不通，这里走 BMCLAPI 镜像；而且它的 HTTPS 会让 Wolfram 内置的 curl 报 SSL 35，所以走这条路径时会退回系统 `curl` 命令（Windows 10+、macOS、主流 Linux 都自带）。
+**Fabric** 走纯 API：按 MC 版本向 `meta.fabricmc.net` 要一份 profile，存成 `versions/fabric-loader-<lv>-<mc>/fabric-loader-<lv>-<mc>.json`，主类换成 `KnotClient`，不动任何原版文件。
 
-加载器信息存在配置里（`loader` / `loaderVer`），跟着实例走，换实例互不影响。装完 Fabric 后把 `fabric-api` 之类的 mod 丢进当前实例的 `mods/` 就能用。
+**Forge / NeoForge** 跑官方安装器（`--installClient`），装完自己生成 `versions/26.3-forge-66.1.0/` 或 `versions/neoforge-26.3.0.97/`。第一次慢（安装器要下几十 MB），之后走缓存。
+
+启动时读 `versions/<id>/<id>.json`，如果有 `inheritsFrom` 就递归把父版本的库和参数合并进来——官方启动器就是这么做的，加载器的 json 只列增量。注意子版本里的空 `logging` / `downloads` 是占位，不能盖掉父版本的真值。
+
+版本号规则：Forge 是 `<MC>-<ver>`（如 `26.3-66.1.0`），NeoForge 是 `<MC 主次>.<patch>`（如 `26.3.0.97`，MC `1.21.1` 对应 `21.1.x`），Fabric 是独立的 loader 版本号。不是每个 MC 版本都有，选之前会先列出可用的。
+
+> NeoForge 的官方 maven 国内直连不通，用 BMCLAPI 镜像；它的 HTTPS 会让 Wolfram 内置 curl 报 SSL 35，所以这条路径退回系统 `curl`（Windows 10+、macOS、主流 Linux 都自带）。
+
+装完 Fabric 后把 `fabric-api` 之类的 mod 丢进当前实例的 `mods/` 就能用。版本和加载器都跟着实例走，换实例互不影响。
 
 ## 数据目录
 

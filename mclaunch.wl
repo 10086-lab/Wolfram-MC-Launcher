@@ -196,13 +196,13 @@ pickJava[need_Integer : 0] := Module[{info, exact, higher},
 
 (* ---------------- 配置持久化 ---------------- *)
 $cfgFile = FileNameJoin[{$mcHome, "wl-launcher.conf"}];
-$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active", "instance", "loader", "loaderVer"};
+$cfgKeys = {"version", "user", "ram", "size", "jvm", "game", "account", "active", "instance"};
 
 $defaultCfg = <|
    "version" -> Automatic, "user" -> "Steve", "ram" -> "4G",
    "size" -> "1280x720", "jvm" -> "", "game" -> "",
    "account" -> "offline", "active" -> "",
-   "instance" -> "default", "loader" -> "", "loaderVer" -> ""|>;
+   "instance" -> "default"|>;
 
 loadCfg[] := Module[{g, inst, f, base},
    g = readConf[$cfgFile];
@@ -428,7 +428,8 @@ printMenu[cfg_] := (
    Print["=============================================="];
    Print["        Wolfram Minecraft Launcher"];
    Print["=============================================="];
-   Print["  1) \:7248\:672c        ", versionLabel[cfg]];
+   Print["  1) \:7248\:672c        ",
+    If[cfg["version"] === Automatic, "\:6700\:65b0\:6b63\:5f0f\:7248", cfg["version"]]];
    Print["  2) \:73a9\:5bb6\:540d      ", cfg["user"]];
    Print["  3) \:5185\:5b58        ", cfg["ram"]];
    Print["  4) \:7a97\:53e3        ", cfg["size"]];
@@ -438,6 +439,7 @@ printMenu[cfg_] := (
    Print["  7) \:8d26\:53f7        ", accountLabel[cfg]];
    Print["  8) \:672c\:5730\:7248\:672c    ", Length[localVersions[]], " \:4e2a\:5df2\:5b89\:88c5"];
    Print["  9) \:4e0b\:8f7d\:7248\:672c    \:88c5\:4e00\:4e2a\:65b0\:7684"];
+   Print["  a) \:5b89\:88c5\:52a0\:8f7d\:5668   Fabric / Forge / NeoForge"];
    Print["  i) \:5b9e\:4f8b        ", cfg["instance"]];
    Print["  r) \:8d44\:6e90\:4e0b\:8f7d    \:8d44\:6e90\:5305\:ff08Modrinth\:ff09"];
    Print["  d) \:78c1\:76d8\:5360\:7528"];
@@ -516,7 +518,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      Print["[x] \:6ca1\:8bfb\:5230\:8f93\:5165\:ff08stdin \:4e0d\:662f\:7ec8\:7aef\:ff1f\:ff09"];
      Return[$Failed]];
     Switch[s,
-     "1", cfg = versionMenu[cfg],
+     "1", cfg = pickVersion[cfg],
      "2", cfg = editCfg[cfg, "user"],
      "3", cfg = editCfg[cfg, "ram"],
      "4", cfg = editCfg[cfg, "size"],
@@ -527,7 +529,7 @@ interactive[] := Module[{cfg, s, t0, r, ready, a2},
      "9", downloadAsk[cfg],
      "i" | "I", cfg = instMenu[cfg],
      "r" | "R", cfg = resDownload[cfg],
-     "m" | "M", cfg = loaderMenu[cfg],
+     "a" | "A", cfg = installLoader[cfg],
      "d" | "D", printDisk[],
      "s" | "S",
       ready = True;
@@ -850,54 +852,120 @@ installNeoForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json},
     Return[$Failed]];
    If[FileExistsQ[json], json, Return[$Failed]]];
 
-versionLabel[cfg_] := Module[{b},
-   b = If[cfg["version"] === Automatic, "\:6700\:65b0\:6b63\:5f0f\:7248", cfg["version"]];
-   If[Lookup[cfg, "loader", ""] === "", b, b <> " + " <> loaderLabel[cfg]]];
+(* ---------------- \:7248\:672c\:89e3\:6790\:ff08\:6309\:5b98\:65b9 inheritsFrom \:9012\:5f52\:5408\:5e76\:ff09 ---------------- *)
+loadVersionJson[id_String] := Module[{f, j, pid, pj},
+   f = FileNameJoin[{$mcVersions, id, id <> ".json"}];
+   If[! FileExistsQ[f], Return[$Failed]];
+   j = Quiet@Check[Import[f, "RawJSON"], $Failed];
+   If[! AssociationQ[j], Return[$Failed]];
+   pid = Lookup[j, "inheritsFrom", None];
+   If[StringQ[pid],
+    pj = loadVersionJson[pid];
+    If[AssociationQ[pj], Return[mergeInherited[pj, j]]]];
+   j];
 
-loaderCompatibleQ[cfg_] := Module[{gv, lv, ldr},
-   ldr = Lookup[cfg, "loader", ""];
-   If[ldr === "", Return[True]];
-   gv = mcVersionId[cfg];
-   lv = Lookup[cfg, "loaderVer", ""];
-   Which[
-    ldr === "fabric", lv === "" || AssociationQ[fabricJson[gv, lv]],
-    ldr === "forge", If[lv === "", forgeVersions[gv] =!= {}, MemberQ[forgeVersions[gv], lv]],
-    ldr === "neoforge", If[lv === "", neoForgeVersions[gv] =!= {}, MemberQ[neoForgeVersions[gv], lv]],
-    True, True]];
+mergeInherited[base_, child_] := Module[{m, aa, ab, c},
+   m = base;
+   Do[
+    If[KeyExistsQ[child, k],
+     c = child[k];
+     (* 子版本里空的 logging / downloads 是占位，不能盖掉父版本的真值 *)
+     If[! (AssociationQ[c] && Length[c] === 0) &&
+        ! (ListQ[c] && Length[c] === 0),
+      m[k] = c]],
+    {k, {"id", "mainClass", "minecraftArguments", "type", "assets",
+      "assetIndex", "javaVersion", "downloads", "logging",
+      "complianceLevel", "releaseTime", "time"}}];
+   m["libraries"] = Join[Lookup[base, "libraries", {}],
+     Lookup[child, "libraries", {}]];
+   aa = Lookup[base, "arguments", <||>];
+   ab = Lookup[child, "arguments", <||>];
+   If[AssociationQ[ab] || AssociationQ[aa],
+    m["arguments"] = <|
+      "game" -> Join[Lookup[aa, "game", {}], Lookup[ab, "game", {}]],
+      "jvm" -> Join[Lookup[aa, "jvm", {}], Lookup[ab, "jvm", {}]]|>];
+   m];
 
-versionMenu[cfg0_Association] := Module[{c, cfg = cfg0},
-   While[True,
-    Print[""];
-    Print["  \:7248\:672c   ", versionLabel[cfg]];
-    Print["  --------------------------------------------"];
-    Print["  1) \:6539 Minecraft \:7248\:672c"];
-    Print["  2) \:6539\:6a21\:7ec4\:52a0\:8f7d\:5668   (", loaderLabel[cfg], ")"];
-    Print["  0) \:8fd4\:56de"];
-    c = askLine["  \:9009\:62e9 > "];
-    If[c === $Failed || c === "" || c === "0", Return[cfg]];
-    Switch[c,
-     "1",
-      cfg = editCfg[cfg, "version"];
-      If[! loaderCompatibleQ[cfg],
-       Print["  [!] ", mcVersionId[cfg], " \:6ca1\:6709 ", loaderLabel[cfg],
-        "\:ff0c\:5df2\:5207\:56de\:539f\:7248"];
-       cfg = Join[cfg, <|"loader" -> "", "loaderVer" -> ""|>];
-       saveCfg[cfg]],
-     "2", cfg = loaderMenu[cfg],
-     _, Print["  ? \:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
+versionJarId[id_String] := Module[{p},
+   If[FileExistsQ[FileNameJoin[{$mcVersions, id, id <> ".jar"}]], Return[id]];
+   p = Quiet@Check[Import[FileNameJoin[{$mcVersions, id, id <> ".json"}], "RawJSON"], $Failed];
+   If[AssociationQ[p] && StringQ[Lookup[p, "inheritsFrom", None]],
+    Return[versionJarId[p["inheritsFrom"]]]];
+   id];
+
+pickVersion[cfg0_Association] := Module[{cfg = cfg0, vs, i, n},
+   vs = localVersions[];
+   If[vs === {}, Print["  \:8fd8\:6ca1\:6709\:88c5\:4efb\:4f55\:7248\:672c\:ff0c\:5148\:6309 9 \:4e0b\:8f7d"]; Return[cfg]];
+   Print[""];
+   Print["  \:9009\:62e9\:8981\:542f\:52a8\:7684\:7248\:672c\:ff1a"];
+   Do[Print["   ", n, ") ", vs[[n]]], {n, Length[vs]}];
+   i = askLine["  \:5e8f\:53f7\:ff08\:56de\:8f66\:53d6\:6d88\:ff09> "];
+   If[! StringQ[i] || StringTrim[i] === "", Return[cfg]];
+   i = Quiet@Check[ToExpression[StringTrim[i]], $Failed];
+   If[! IntegerQ[i] || i < 1 || i > Length[vs],
+    Print["  \:5e8f\:53f7\:4e0d\:5bf9"]; Return[cfg]];
+   cfg["version"] = vs[[i]];
+   saveCfg[cfg];
+   Print["  ==> ", cfg["version"]];
    cfg];
 
-mergeVersion[base_, extra_] := Module[{bl, el, ba, ea},
-   bl = Lookup[base, "libraries", {}];
-   el = Lookup[extra, "libraries", {}];
-   ba = Lookup[base, "arguments", <||>];
-   ea = Lookup[extra, "arguments", <||>];
-   Join[base,
-    <|"mainClass" -> Lookup[extra, "mainClass", Lookup[base, "mainClass", ""]],
-      "libraries" -> Join[bl, el],
-      "arguments" -> <|
-        "game" -> Join[Lookup[ba, "game", {}], Lookup[ea, "game", {}]],
-        "jvm" -> Join[Lookup[ba, "jvm", {}], Lookup[ea, "jvm", {}]]|>|>]];
+installLoader[cfg0_Association] := Module[{cfg = cfg0, vs, c, base, lv, lv2,
+    javaInfo, java, j, id2, f, n},
+   vs = Select[localVersions[],
+     Function[v, ! StringContainsQ[v, "-forge-"] &&
+        ! StringStartsQ[v, "fabric-loader-"] &&
+        ! StringStartsQ[v, "neoforge-"]]];
+   If[vs === {}, Print["  \:5148\:6309 9 \:4e0b\:8f7d\:4e00\:4e2a\:539f\:7248\:ff0c\:518d\:6765\:88c5\:52a0\:8f7d\:5668"]; Return[cfg]];
+   Print[""];
+   Print["  \:57fa\:4e8e\:54ea\:4e2a\:539f\:7248\:88c5\:52a0\:8f7d\:5668\:ff1a"];
+   Do[Print["   ", n, ") ", vs[[n]]], {n, Length[vs]}];
+   c = askLine["  \:5e8f\:53f7\:ff08\:56de\:8f66\:53d6\:6d88\:ff09> "];
+   If[! StringQ[c] || StringTrim[c] === "", Return[cfg]];
+   c = Quiet@Check[ToExpression[StringTrim[c]], $Failed];
+   If[! IntegerQ[c] || c < 1 || c > Length[vs],
+    Print["  \:5e8f\:53f7\:4e0d\:5bf9"]; Return[cfg]];
+   base = vs[[c]];
+   Print[""];
+   Print["  \:88c5\:54ea\:4e2a\:52a0\:8f7d\:5668\:ff1a"];
+   Print["   1) Fabric   2) Forge   3) NeoForge"];
+   c = askLine["  \:9009\:62e9\:ff08\:56de\:8f66\:53d6\:6d88\:ff09> "];
+   If[! StringQ[c] || StringTrim[c] === "", Return[cfg]];
+   javaInfo = pickJava[21];
+   java = If[javaInfo === $Failed, "java", First[javaInfo]];
+   Switch[c,
+    "1",
+     lv = fabricLatest[];
+     If[lv === "", Print["  [x] \:62ff\:4e0d\:5230 Fabric \:7248\:672c\:5217\:8868"]; Return[cfg]];
+     lv2 = askLine["  Fabric Loader \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> lv <> "\:ff09> "];
+     If[StringQ[lv2] && StringTrim[lv2] =!= "", lv = StringTrim[lv2]];
+     j = fabricJson[base, lv];
+     If[! AssociationQ[j], Print["  [x] \:62ff\:4e0d\:5230 Fabric \:5b89\:88c5\:914d\:7f6e"]; Return[cfg]];
+     id2 = "fabric-loader-" <> lv <> "-" <> base;
+     j["id"] = id2;
+     f = FileNameJoin[{$mcVersions, id2, id2 <> ".json"}];
+     ensureDir[DirectoryName[f]];
+     Export[f, j, "JSON"],
+    "2",
+     lv = Last[forgeVersions[base]];
+     If[lv === "", Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 Forge"]; Return[cfg]];
+     lv2 = askLine["  Forge \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> lv <> "\:ff09> "];
+     If[StringQ[lv2] && StringTrim[lv2] =!= "", lv = StringTrim[lv2]];
+     If[installForge[base, lv, java] === $Failed, Return[cfg]];
+     id2 = base <> "-forge-" <> lv,
+    "3",
+     lv = Last[neoForgeVersions[base]];
+     If[lv === "", Print["  [x] ", base, " \:6ca1\:6709\:53ef\:7528\:7684 NeoForge"]; Return[cfg]];
+     lv2 = askLine["  NeoForge \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> lv <> "\:ff09> "];
+     If[StringQ[lv2] && StringTrim[lv2] =!= "", lv = StringTrim[lv2]];
+     If[installNeoForge[base, lv, java] === $Failed, Return[cfg]];
+     id2 = "neoforge-" <> lv,
+    _, Return[cfg]];
+   If[FileExistsQ[FileNameJoin[{$mcVersions, id2, id2 <> ".json"}]],
+    cfg["version"] = id2;
+    saveCfg[cfg];
+    Print["  ==> \:5df2\:88c5\:597d ", id2, "\:ff0c\:5df2\:5207\:5230\:8fd9\:4e2a\:7248\:672c"],
+    Print["  [x] \:5b89\:88c5\:6ca1\:6709\:751f\:6210\:7248\:672c\:6587\:4ef6"]];
+   cfg];
 
 installForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json, lp},
    id2 = gv <> "-forge-" <> fv;
@@ -922,88 +990,6 @@ installForge[gv_, fv_, java_] := Module[{d, url, inst, r, id2, json, lp},
     Print["    ", StringTake[r["StandardOutput"], UpTo[400]]];
     Return[$Failed]];
    If[FileExistsQ[json], json, Return[$Failed]]];
-
-loaderJson[cfg_, java_, gv_] := Module[{lv, j},
-   lv = Lookup[cfg, "loaderVer", ""];
-   Which[
-    Lookup[cfg, "loader", ""] === "fabric",
-     If[lv === "", lv = fabricLatest[]];
-     If[lv === "", Print["    [x] \:62ff\:4e0d\:5230 Fabric \:7248\:672c\:5217\:8868"]; Return[$Failed]];
-     j = fabricJson[gv, lv];
-     If[! AssociationQ[j], Print["    [x] Fabric \:914d\:7f6e\:83b7\:53d6\:5931\:8d25"]; Return[$Failed]];
-     Print["    \:52a0\:8f7d\:5668 : Fabric ", lv];
-     j,
-    Lookup[cfg, "loader", ""] === "forge",
-     If[lv === "", lv = Last[forgeVersions[gv]]];
-     If[lv === "", Print["    [x] ", gv, " \:6ca1\:6709\:53ef\:7528\:7684 Forge"]; Return[$Failed]];
-     j = installForge[gv, lv, java];
-     If[j === $Failed, Return[$Failed]];
-     j = Quiet@Check[Import[j, "RawJSON"], $Failed];
-     If[! AssociationQ[j], Print["    [x] Forge \:914d\:7f6e\:8bfb\:53d6\:5931\:8d25"]; Return[$Failed]];
-     Print["    \:52a0\:8f7d\:5668 : Forge ", lv];
-     j,
-    Lookup[cfg, "loader", ""] === "neoforge",
-     If[lv === "", lv = Last[neoForgeVersions[gv]]];
-     If[lv === "", Print["    [x] ", gv, " \:6ca1\:6709\:53ef\:7528\:7684 NeoForge"]; Return[$Failed]];
-     j = installNeoForge[gv, lv, java];
-     If[j === $Failed, Return[$Failed]];
-     j = Quiet@Check[Import[j, "RawJSON"], $Failed];
-     If[! AssociationQ[j], Print["    [x] NeoForge \:914d\:7f6e\:8bfb\:53d6\:5931\:8d25"]; Return[$Failed]];
-     Print["    \:52a0\:8f7d\:5668 : NeoForge ", lv];
-     j,
-    True, $Failed]];
-
-loaderMenu[cfg0_Association] := Module[{c, cfg = cfg0, lv, vs, i, gv},
-   While[True,
-    Print[""];
-    Print["  \:6a21\:7ec4\:52a0\:8f7d\:5668   \:5f53\:524d: ", loaderLabel[cfg]];
-    Print["  --------------------------------------------"];
-    Print["  1) \:539f\:7248\:ff08\:4e0d\:5e26\:52a0\:8f7d\:5668\:ff09"];
-    Print["  2) Fabric"];
-    Print["  3) Forge"];
-    Print["  4) NeoForge"];
-    Print["  0) \:8fd4\:56de"];
-    c = askLine["  \:9009\:62e9 > "];
-    If[c === $Failed || c === "" || c === "0", Return[cfg]];
-    gv = mcVersionId[cfg];
-    Switch[c,
-     "1",
-      cfg = Join[cfg, <|"loader" -> "", "loaderVer" -> ""|>];
-      Print["  ==> \:5df2\:5207\:56de\:539f\:7248"],
-     "2",
-      lv = fabricLatest[];
-      If[lv === "",
-       Print["  [x] \:62ff\:4e0d\:5230 Fabric \:7248\:672c\:5217\:8868"];
-       cfg = Join[cfg, <|"loader" -> "fabric", "loaderVer" -> ""|>];
-       Print["  ==> \:52a0\:8f7d\:5668 Fabric\:ff08\:6700\:65b0\:ff09"],
-       Print["  \:6700\:65b0 Fabric Loader: ", lv, "\:ff0c\:76f4\:63a5\:56de\:8f66\:5c31\:7528\:5b83 > "];
-       i = askLine["  \:7248\:672c > "];
-       If[i =!= $Failed,
-        i = If[StringTrim[i] === "", lv, StringTrim[i]];
-        cfg = Join[cfg, <|"loader" -> "fabric", "loaderVer" -> i|>];
-        Print["  ==> \:52a0\:8f7d\:5668 Fabric ", i]]],
-     "3",
-      vs = forgeVersions[gv];
-      If[vs === {}, Print["  [x] ", gv, " \:8fd8\:6ca1\:6709 Forge"]; Return[cfg]];
-      Print["  ", gv, " \:53ef\:7528 Forge: ", StringRiffle[Take[vs, -5], " / "]];
-      i = askLine["  \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> Last[vs] <> "\:ff09> "];
-      If[i =!= $Failed,
-       i = If[StringTrim[i] === "", Last[vs], StringTrim[i]];
-       cfg = Join[cfg, <|"loader" -> "forge", "loaderVer" -> i|>];
-       Print["  ==> \:52a0\:8f7d\:5668 Forge ", i]],
-     "4",
-      vs = neoForgeVersions[gv];
-      If[vs === {}, Print["  [x] ", gv, " \:8fd8\:6ca1\:6709 NeoForge"]; Return[cfg]];
-      Print["  ", gv, " \:53ef\:7528 NeoForge: ", StringRiffle[Take[vs, -5], " / "]];
-      i = askLine["  \:7248\:672c\:ff08\:56de\:8f66\:7528\:6700\:65b0 " <> Last[vs] <> "\:ff09> "];
-      If[i =!= $Failed,
-       i = If[StringTrim[i] === "", Last[vs], StringTrim[i]];
-       cfg = Join[cfg, <|"loader" -> "neoforge", "loaderVer" -> i|>];
-       Print["  ==> \:52a0\:8f7d\:5668 NeoForge ", i]],
-     _, Print["  ? \:6ca1\:6709\:8fd9\:4e2a\:9009\:9879"]]];
-   cfg];
-
-$modrinthApi = "https://api.modrinth.com/v2";
 
 mrSearch[q_String, type_String, n_Integer : 8] := Module[{u, j},
    u = $modrinthApi <> "/search?limit=" <> ToString[n] <>
@@ -1080,7 +1066,7 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    legacy, na, jvmArgsRaw, gameArgsRaw,
    cmd, proc, line, n = 0, vars, logCfg, logPath, logArg, ai, aif,
    aIdx, objs2, assetRoot, missing, n2, missMB, dlOne, failCount,
-   deadline, sz, printed = 0, extra, waitSec},
+   deadline, sz, printed = 0, extra, waitSec, jarId, eline},
    manifest = getJson[$manifestUrl];
 
    id = If[cfg["version"] === Automatic,
@@ -1092,8 +1078,8 @@ run[cfg_Association, mode_String : "launch"] := Module[{
 
    localJson = FileNameJoin[{$mcVersions, id, id <> ".json"}];
    verJson = If[FileExistsQ[localJson],
-     Print["==> Minecraft ", id, "  (\:672c\:5730\:6e05\:5355)"];
-     Quiet@Check[Import[localJson, "RawJSON"], $Failed],
+     Print["==> ", id, "  (\:672c\:5730)"];
+     loadVersionJson[id],
      If[manifest === $Failed,
       Print["[x] \:7f51\:7edc\:4e0d\:53ef\:7528\:ff0c\:672c\:5730\:4e5f\:6ca1\:6709 ", id]; Return[$Failed],
       target = SelectFirst[manifest["versions"], #["id"] === id &];
@@ -1119,15 +1105,11 @@ run[cfg_Association, mode_String : "launch"] := Module[{
     Print["    [!] \:8fd9\:4e2a\:7248\:672c\:9700\:8981 Java ", needJava,
      "+\:ff0c\:5f53\:524d\:53ea\:6709 Java ", Last[javaInfo],
      "\:ff0c\:53ef\:80fd\:65e0\:6cd5\:542f\:52a8"]];
-   If[mode =!= "download" && Lookup[cfg, "loader", ""] =!= "",
-    extra = loaderJson[cfg, java, id];
-    If[extra === $Failed,
-     Print["[x] \:6a21\:7ec4\:52a0\:8f7d\:5668\:51c6\:5907\:5931\:8d25"]; Return[$Failed]];
-    verJson = mergeVersion[verJson, extra]];
    Print["    \:4e3b\:7c7b   : ", verJson["mainClass"]];
 
+   jarId = versionJarId[id];
    (* --- client.jar --- *)
-   clientJar = FileNameJoin[{$mcVersions, id, id <> ".jar"}];
+   clientJar = FileNameJoin[{$mcVersions, jarId, jarId <> ".jar"}];
    ensureDir[DirectoryName[clientJar]];
    art = verJson["downloads", "client"];
    Print["    client : ", IntegerPart[art["size"]/1024/1024], " MB"];
@@ -1337,6 +1319,8 @@ run[cfg_Association, mode_String : "launch"] := Module[{
    deadline = AbsoluteTime[] + waitSec;
    While[AbsoluteTime[] < deadline,
     line = Quiet@Check[TimeConstrained[ReadLine[proc], 0.3, $noData], $noData];
+    eline = Quiet@Check[TimeConstrained[ReadLine[proc["StandardError"]], 0.3, $noData], $noData];
+    If[StringQ[eline] && StringTrim[eline] =!= "", Print["  ! ", eline]];
     If[StringQ[line],
      Which[
       StringContainsQ[line, "<![CDATA["],
