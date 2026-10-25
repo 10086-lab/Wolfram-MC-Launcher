@@ -10,6 +10,7 @@
 - **可调配置**：内存、窗口大小、JVM 参数、游戏参数，设置写盘持久化
 - **多实例**：每个实例一套独立的游戏目录，存档、资源包、按键设置互不干扰。`default` 实例就是 `~/.minecraft` 本身，老存档照常可见
 - **资源下载**：内置 Modrinth 搜索，按当前版本筛出可用的资源包，直接装进当前实例的 `resourcepacks/`
+- **模组管理**：列出 `mods/` 里的 jar 并标注它是 Fabric 还是 NeoForge 的；从 Modrinth 按当前版本 + 加载器筛出可装的模组直接下载；加载器不匹配时启动前会提示
 - **磁盘占用统计**：分别显示 libraries / assets / versions 的体积
 - **跨平台**：Windows、macOS、Linux 用同一份代码；按清单的 `rules` 自动挑平台对应的库和 natives
 - **版本通吃**：1.13+ 用 `arguments`，更早的版本用 `minecraftArguments`，旧版 natives 也能处理
@@ -122,7 +123,9 @@ wolframscript -file mclaunch.wl
   7) 账号        离线 Steve
   8) 本地版本    0 个已安装
   9) 下载版本
-  i) 实例        default
+  a) 安装加载器   Fabric / Forge / NeoForge
+  m) 模组        2 个（NeoForge）
+  i) 游戏目录    default  /home/you/.minecraft
   r) 资源下载    资源包（Modrinth）
   d) 磁盘占用
   --------------------------------------------
@@ -142,6 +145,16 @@ wolframscript -file mclaunch.wl
 配置会存盘，下次打开菜单直接沿用，按 `s` 就能玩。
 
 菜单里 `s` 启动游戏，`7` 管理账号，`9` 下载版本，`i` 切实例，`r` 下资源包，`q` 退出。
+
+### 模组
+
+按 `m` 打开模组菜单：
+
+- 列出 `mods/` 里所有 jar，标出体积和类型（`[fabric]` / `[neoforge]` / `[forge]`），跟当前加载器不匹配的会加一句 `[!] 当前加载器用不了`
+- `1` 从 Modrinth 搜模组，按当前 MC 版本 + 加载器筛出可用的文件再下载
+- `2` 删除、`3` 在文件管理器里打开 `mods/`
+
+给 NeoForge 版本装 Fabric 模组不会起作用，游戏会直接忽略它们；启动器在启动前会把这种不匹配打印出来。
 
 ### 多实例
 
