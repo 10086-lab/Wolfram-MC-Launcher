@@ -286,17 +286,29 @@ accountLabel[cfg_] := Module[{l, a},
 $instRoot = FileNameJoin[{$mcHome, "instances"}];
 
 (* default \:5b9e\:4f8b\:7684\:76ee\:5f55\:5c31\:662f ~/.minecraft \:672c\:8eab\:ff0c\:8001\:5b58\:6863\:4ecd\:7136\:53ef\:89c1 *)
+(* \:81ea\:5b9a\:4e49\:76ee\:5f55\:7684\:5b9e\:4f8b\:8bb0\:5728\:8fd9\:91cc\:ff1aname -> \:7edd\:5bf9\:8def\:5f84 *)
+$instMapFile = FileNameJoin[{$mcHome, "instances.json"}];
+
+readInstMap[] := Module[{j},
+   j = Quiet@Check[Import[$instMapFile, "RawJSON"], <||>];
+   If[AssociationQ[j], j, <||>]];
+
+writeInstMap[m_Association] := Quiet@Check[Export[$instMapFile, m, "JSON"], Null];
+
 instDir[inst_String] := If[inst === "default", $mcHome,
-   FileNameJoin[{$instRoot, inst}]];
+   Module[{p = Lookup[readInstMap[], inst, ""]},
+    If[StringQ[p] && StringLength[p] > 0, p,
+     FileNameJoin[{$instRoot, inst}]]]];
 
 instCfgPath[inst_String] := If[inst === "default", $cfgFile,
-   FileNameJoin[{$instRoot, inst, "launcher.conf"}]];
+   FileNameJoin[{instDir[inst], "launcher.conf"}]];
 
-instanceNames[] := Module[{d},
+instanceNames[] := Module[{d, m},
    d = If[DirectoryQ[$instRoot],
      Quiet@Check[Select[FileNameTake /@ FileNames[$instRoot <> "/*"],
         DirectoryQ[FileNameJoin[{$instRoot, #}]] &], {}], {}];
-   Prepend[DeleteCases[Sort[d], "default"], "default"]];
+   m = Keys[readInstMap[]];
+   Prepend[DeleteCases[Union[d, m], "default"], "default"]];
 
 readConf[file_String] := Module[{lines, pairs},
    If[! FileExistsQ[file], Return[<||>]];
@@ -321,25 +333,32 @@ switchTo[name_String] := Module[{def},
    def["instance"] = name;
    writeConf[$cfgFile, def]];
 
-makeInstance[name_String, cfg_Association] := Module[{new},
-   ensureDir[instDir[name]];
+makeInstance[name_String, cfg_Association, dir_String : ""] := Module[{d, new},
+   d = If[dir === "", FileNameJoin[{$instRoot, name}], dir];
+   ensureDir[d];
+   If[dir =!= "", writeInstMap[Append[readInstMap[], name -> d]]];
    new = Join[cfg, <|"instance" -> name|>];
    new];
 
-deleteInstance[name_String] := (
+deleteInstance[name_String] := Module[{m, p},
    If[name === "default", Return[False]];
-   If[DirectoryQ[instDir[name]],
-    Quiet@Check[DeleteDirectory[instDir[name], DeleteContents -> True], Null]];
-   True);
+   m = readInstMap[];
+   p = Lookup[m, name, ""];
+   If[StringQ[p] && StringLength[p] > 0,
+    writeInstMap[KeyDrop[m, name]],
+    If[DirectoryQ[FileNameJoin[{$instRoot, name}]],
+     Quiet@Check[DeleteDirectory[FileNameJoin[{$instRoot, name}],
+       DeleteContents -> True], Null]]];
+   True];
 
-instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim},
+instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim, dirIn},
    While[True,
     ns = instanceNames[];
     Print[""];
     Print["  ", "\:5b9e\:4f8b\:7ba1\:7406", "  (\:5f53\:524d: ", cfg["instance"], ")"];
     Print["  --------------------------------------------"];
     Scan[Function[n,
-       Print["   ", If[n === cfg["instance"], "*", " "], " ", n]],
+       Print["   ", If[n === cfg["instance"], "*", " "], " ", n, "  ", instDir[n]]],
       ns];
     Print["  --------------------------------------------"];
     Print["  1) ", "\:5207\:6362", "   2) ", "\:65b0\:5efa", "   3) ", "\:5220\:9664", "   0) ", "\:8fd4\:56de"];
@@ -360,9 +379,16 @@ instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim},
       If[StringQ[name] && StringTrim[name] =!= "" &&
          ! MemberQ[ns, StringTrim[name]],
        name = StringTrim[name];
-       cfg = makeInstance[name, cfg];
+       dirIn = askLine["  \:76ee\:5f55\:ff08\:56de\:8f66\:7528 " <> FileNameJoin[{$instRoot, name}] <> "\:ff09> "];
+       If[! StringQ[dirIn], dirIn = ""];
+       dirIn = StringTrim[dirIn];
+       If[StringStartsQ[dirIn, "~"],
+        dirIn = StringReplace[dirIn, StartOfString ~~ "~" -> $HomeDirectory]];
+       If[dirIn =!= "" && ! StringStartsQ[dirIn, "/"],
+        dirIn = FileNameJoin[{$HomeDirectory, dirIn}]];
+       cfg = makeInstance[name, cfg, dirIn];
        saveCfg[cfg];
-       Print["  ==> ", "\:5df2\:521b\:5efa\:5b9e\:4f8b ", name],
+       Print["  ==> ", "\:5df2\:521b\:5efa\:5b9e\:4f8b ", name, "  ", gameDirOf[cfg]],
        Print["  \:540d\:5b57\:4e3a\:7a7a\:6216\:5df2\:5b58\:5728"]],
      "3",
       victim = askLine["  \:5220\:9664\:54ea\:4e2a > "];
@@ -370,7 +396,10 @@ instMenu[cfg0_Association] := Module[{c, cfg = cfg0, ns, i, name, victim},
        victim = StringTrim[victim];
        If[victim === "default",
         Print["  default \:5b9e\:4f8b\:4e0d\:80fd\:5220\:9664"],
-        Print["  \:786e\:5b9a\:5220\:9664 ", victim, " \:5417\:ff1f\:8f93\:5165 yes \:786e\:8ba4 > "];
+        Print["  \:5220\:9664 ", victim, "\:ff08", instDir[victim],
+         If[Lookup[readInstMap[], victim, ""] =!= "",
+          "\:ff0c\:81ea\:5b9a\:4e49\:76ee\:5f55\:53ea\:5220\:8bb0\:5f55", "\:ff0c\:76ee\:5f55\:4f1a\:4e00\:8d77\:5220"],
+         "\:ff09\:ff0c\:8f93\:5165 yes \:786e\:8ba4 > "];
         If[askLine["  > "] === "yes",
          deleteInstance[victim];
          If[cfg["instance"] === victim,

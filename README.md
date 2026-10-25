@@ -162,12 +162,15 @@ wolframscript -file mclaunch.wl
 
 ```
 ~/.minecraft/               ← default 实例（老存档都在这）
-~/.minecraft/instances/foo/ ← 新建的 foo 实例
+~/.minecraft/instances/foo/ ← 新建的 foo 实例（默认位置）
+/home/you/mc-bar/           ← 也可以指定任意目录，比如建在别的盘
 ```
 
-存档、资源包、按键设置、显示设置各管各的，互不污染。新建实例会继承当时的配置，之后改哪个实例的配置就只写那个实例的 `launcher.conf`。
+新建时会问目录，直接回车就用 `~/.minecraft/instances/<名字>`，也可以填绝对路径、`~/xxx` 或者相对路径。指定过目录的实例记在 `~/.minecraft/instances.json`，菜单里会显示每个实例的实际路径。
 
-`default` 实例不能删——它对应 `~/.minecraft` 本身，删了等于删游戏目录。
+存档、资源包、按键设置、显示设置各管各的，互不污染。新建实例会继承当时的配置，之后改哪个实例的配置就只写那个实例目录里的 `launcher.conf`。
+
+`default` 实例不能删——它对应 `~/.minecraft` 本身，删了等于删游戏目录。自定义目录的实例删除时只删掉记录，不动你已经存进去的存档和文件。
 
 ### 资源包
 
