@@ -164,21 +164,33 @@ wolframscript -file mclaunch.wl
 
 ### 模组加载器
 
-按 `m` 选加载器，菜单里跟上：
+加载器是**版本的属性**，不是全局开关。按 `1` 进版本菜单：
+
+```
+  版本   26.3 + Forge 66.1.0
+  1) 改 Minecraft 版本
+  2) 改模组加载器   (Forge 66.1.0)
+  0) 返回
+```
+
+改 MC 版本后会自动校验：新版本没有当前这个加载器，就提示一句并切回原版，不会带着一个不存在的组合去启动。
 
 ```
   1) 原版（不带加载器）
   2) Fabric
   3) Forge
+  4) NeoForge
 ```
 
 **Fabric** 走纯 API：按当前 MC 版本向 `meta.fabricmc.net` 要一份 profile，合并主类和库，直接启动，不装任何东西。默认用最新 loader，也可以自己填版本号。
 
-**Forge** 需要跑官方安装器：启动器先下 `forge-<mc>-<ver>-installer.jar`，再用当前 Java 执行 `--installClient`，装完读生成的版本 JSON 合并。第一次会慢一些（安装器自己还要下几十 MB），之后就走缓存了。
+**Forge / NeoForge** 都要跑官方安装器：先下 `forge-<mc>-<ver>-installer.jar` 或 `neoforge-<ver>-installer.jar`，再用当前 Java 执行 `--installClient`，装完读生成的版本 JSON 合并。第一次会慢一些（安装器自己还要下几十 MB），之后走缓存。
 
-Forge 的版本跟着 MC 版本走——不是每个 MC 版本都有 Forge，选之前会先列出来。比如 `26.3` 有 `66.1.0`，但 `26.2` 官方没发。
+版本跟着 MC 版本走，不是每个 MC 版本都有——选之前会先列出来。比如 `26.3` 有 Forge `66.1.0` 和 NeoForge `26.3.0.97`，但 `26.2` 官方都没发。NeoForge 的版本号是 `<MC 主次>.<patch>`，MC `1.21.1` 对应 `21.1.x`。
 
-加载器信息存在配置里（`loader` / `loaderVer`），换实例互不影响。装完 Fabric 后把 `fabric-api` 之类的 mod 丢进当前实例的 `mods/` 就能用。
+> NeoForge 的官方 maven 在国内直连不通，这里走 BMCLAPI 镜像；而且它的 HTTPS 会让 Wolfram 内置的 curl 报 SSL 35，所以走这条路径时会退回系统 `curl` 命令（Windows 10+、macOS、主流 Linux 都自带）。
+
+加载器信息存在配置里（`loader` / `loaderVer`），跟着实例走，换实例互不影响。装完 Fabric 后把 `fabric-api` 之类的 mod 丢进当前实例的 `mods/` 就能用。
 
 ## 数据目录
 
